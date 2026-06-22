@@ -29,16 +29,11 @@ function contactCard() {
 }
 
 function aiGreeting(name) {
-  const n   = name ? ` *${name}*` : '';
-  const biz = process.env.BUSINESS_NAME || 'First Battery Woodmead';
+  const n = name ? ` *${name}*` : '';
   return (
-    `Hey${n}! 👋 Welcome to *${biz}*.\n\n` +
-    `🔋 What car do you need a battery for?\n\n` +
-    `Just type your *make, model and year* and I'll find your match instantly!\n\n` +
-    `_Already know your battery size, Ah or CCA? Just type it and I'll pull up the price!_\n\n` +
-    `📸 _Or send a photo of your *licence disc* — even faster!_\n\n` +
-    `_Store details? Reply *2*  |  Contact us? Reply *0*_\n\n` +
-    `_You can reply in any language — whatever's comfortable for you!_ 🌍`
+    `Hi${n}! 👋 I'm MAC, your Midrand Midas AI Assistant.\n\n` +
+    `I can help you find the correct battery for your vehicle and give you an instant quote. 🔋\n\n` +
+    `What can I help you with today?`
   );
 }
 
