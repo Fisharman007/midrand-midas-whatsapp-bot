@@ -8,6 +8,7 @@ const { reloadCatalogue } = require('./catalogue');
 const { getSession, updateSession, clearSession } = require('./sessions');
 const { getRecentLogs, getStats } = require('./logger');
 const { getLastImage } = require('./ai');
+const { checkRateLimit, validateTwilioSignature, sanitiseInput, isInputTooLong, checkAdminAuth } = require('./security');
 
 const app = express();
 app.use(express.urlencoded({ extended: false }));
@@ -33,7 +34,9 @@ function aiGreeting(name) {
   return (
     `Hi${n}! 👋 I'm MAC, your Midrand Midas AI Assistant.\n\n` +
     `I can help you find the correct battery for your vehicle and give you an instant quote. 🔋\n\n` +
-    `What can I help you with today?`
+    `What can I help you with today?\n\n` +
+    `_📸 Send a photo of your *licence disc* — I'll identify your vehicle instantly!_\n` +
+    `_Store details? Reply *2*  |  Contact us? Reply *0*_`
   );
 }
 
@@ -95,9 +98,27 @@ app.post('/webhook', async (req, res) => {
   const from = req.body.From;
   if (!from) return res.status(400).send('Missing From field');
 
+  if (process.env.NODE_ENV === 'production' && !validateTwilioSignature(req)) {
+    return res.status(403).send('Forbidden');
+  }
+
+  if (!checkRateLimit(from)) {
+    const twiml = new MessagingResponse();
+    twiml.message('Too many messages. Please wait a moment before trying again.');
+    res.type('text/xml');
+    return res.send(twiml.toString());
+  }
+
   try {
-    const incomingMsg = (req.body.Body        || '').trim();
-    const profileName = (req.body.ProfileName || '').trim();
+    const incomingMsg = sanitiseInput((req.body.Body || '').trim());
+    const profileName = sanitiseInput((req.body.ProfileName || '').trim());
+
+    if (isInputTooLong(incomingMsg)) {
+      const twiml = new MessagingResponse();
+      twiml.message('Your message is too long. Please keep it under 800 characters.');
+      res.type('text/xml');
+      return res.send(twiml.toString());
+    }
     const mediaUrl    = parseInt(req.body.NumMedia, 10) > 0 ? req.body.MediaUrl0 : null;
 
     let responseText;
@@ -175,7 +196,7 @@ app.post('/wa-webhook', async (req, res) => {
 
 // --- Admin: last received image viewer (debug) ---
 app.get('/admin/last-image', (req, res) => {
-  if (req.query.pw !== ADMIN_PASSWORD) {
+  if (!checkAdminAuth(req)) {
     return res.status(401).send('Unauthorised — add ?pw=YOUR_PASSWORD');
   }
   const img = getLastImage();
@@ -192,8 +213,17 @@ app.get('/admin/last-image', (req, res) => {
 // --- Admin: conversation logs viewer ---
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'battery123';
 
+function escHtml(str) {
+  return String(str || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
 app.get('/admin/logs', (req, res) => {
-  if (req.query.pw !== ADMIN_PASSWORD) {
+  if (!checkAdminAuth(req)) {
     return res.status(401).send('Unauthorised — add ?pw=YOUR_PASSWORD');
   }
 
@@ -229,19 +259,19 @@ app.get('/admin/logs', (req, res) => {
   <div class="stat"><b>${stats.unique_users || 0}</b>users</div>
   <div class="stat"><b>${stats.total_tokens_in || 0}</b>tokens in</div>
   <div class="stat"><b>${stats.total_tokens_out || 0}</b>tokens out</div>
-  <div class="stat"><b>${Object.entries(stats.tool_usage || {}).map(([k,v])=>`${k}:${v}`).join(' ') || '—'}</b>tools</div>
+  <div class="stat"><b>${Object.entries(stats.tool_usage || {}).map(([k,v])=>`${escHtml(k)}:${escHtml(String(v))}`).join(' ') || '—'}</b>tools</div>
 </div>
 ${logs.map(e => `
 <div class="card">
   <div class="meta">
-    <span>${e.ts}</span>
-    <span class="tag">${e.from}${e.profile ? ' · ' + e.profile : ''}</span>
-    <span>turn ${e.turn}</span>
-    <span>${e.duration_ms}ms · ${e.tokens_in}↑ ${e.tokens_out}↓</span>
-    ${e.tools.map(t=>`<span class="tag tool">${t}</span>`).join('')}
+    <span>${escHtml(e.ts)}</span>
+    <span class="tag">${escHtml(e.from)}${e.profile ? ' · ' + escHtml(e.profile) : ''}</span>
+    <span>turn ${escHtml(String(e.turn))}</span>
+    <span>${escHtml(String(e.duration_ms))}ms · ${escHtml(String(e.tokens_in))}↑ ${escHtml(String(e.tokens_out))}↓</span>
+    ${(e.tools || []).map(t=>`<span class="tag tool">${escHtml(t)}</span>`).join('')}
   </div>
-  <div class="row"><div class="bubble-u">${e.user.replace(/</g,'&lt;')}</div></div>
-  <div class="row"><div class="bubble-b">${e.bot.replace(/</g,'&lt;')}</div></div>
+  <div class="row"><div class="bubble-u">${escHtml(e.user)}</div></div>
+  <div class="row"><div class="bubble-b">${escHtml(e.bot)}</div></div>
 </div>`).join('')}
 </body></html>`);
 });

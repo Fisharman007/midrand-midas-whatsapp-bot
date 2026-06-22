@@ -6,6 +6,7 @@ const { logTurn } = require('./logger');
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
 const MAX_HISTORY_MESSAGES = 20;
+const MAX_TOOL_RESULT_CHARS = 4000;
 
 const client = new Anthropic({
   apiKey: process.env.ANTHROPIC_API_KEY,
@@ -332,11 +333,11 @@ async function runAIConversation(from, message, history, profileName) {
       .filter(b => b.type === 'tool_use')
       .map(b => {
         toolsUsed.push(b.name);
-        return {
-          type:        'tool_result',
-          tool_use_id: b.id,
-          content:     JSON.stringify(executeTool(b.name, b.input)),
-        };
+        const raw = JSON.stringify(executeTool(b.name, b.input));
+        const content = raw.length > MAX_TOOL_RESULT_CHARS
+          ? raw.slice(0, MAX_TOOL_RESULT_CHARS) + '...[truncated]'
+          : raw;
+        return { type: 'tool_result', tool_use_id: b.id, content };
       });
 
     workingMessages.push({ role: 'user', content: toolResults });

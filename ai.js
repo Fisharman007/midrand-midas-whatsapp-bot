@@ -22,7 +22,7 @@ async function downloadRawBuffer(imageUrl) {
   const accountSid = process.env.TWILIO_ACCOUNT_SID;
   const authToken  = process.env.TWILIO_AUTH_TOKEN;
   const hasAuth    = !!(accountSid && authToken);
-  console.log(`[ImageDebug] Fetching: ${imageUrl.substring(0, 80)}... | auth: ${hasAuth}`);
+  console.log(`[ImageDebug] Fetching image | auth: ${hasAuth}`);
 
   // First attempt: with Twilio Basic auth
   let res;
@@ -36,14 +36,14 @@ async function downloadRawBuffer(imageUrl) {
     if (err.response?.status === 301 || err.response?.status === 302 || err.response?.status === 307 || err.response?.status === 308) {
       // Redirect — follow without auth (e.g. Twilio → S3)
       const redirectUrl = err.response.headers.location;
-      console.log(`[ImageDebug] Redirect → ${redirectUrl?.substring(0, 80)}...`);
+      console.log('[ImageDebug] Redirect → following without auth');
       res = await axios.get(redirectUrl, { responseType: 'arraybuffer', maxRedirects: 5 });
     } else if (err.response?.status === 401) {
       // Auth failed — try without credentials (some Twilio URLs are public after signing)
       console.warn(`[ImageDebug] 401 with auth — retrying without credentials`);
       res = await axios.get(imageUrl, { responseType: 'arraybuffer', maxRedirects: 5 });
     } else {
-      console.error(`[ImageDebug] Download failed: ${err.response?.status} — ${imageUrl.substring(0, 80)}`);
+      console.error(`[ImageDebug] Download failed: ${err.response?.status}`);
       throw err;
     }
   }
@@ -128,11 +128,11 @@ async function readLicenceDisc(imageUrl, mediaId = null) {
   const rawText = response.content.find(b => b.type === 'text')?.text || '';
   console.log(`[LicenceDisc] Claude raw response: ${rawText}`);
 
-  const match = rawText.match(/\{[\s\S]*?\}/);
-  if (!match) return null;
+  const jsonStr = extractJson(rawText);
+  if (!jsonStr) return null;
 
   try {
-    const data = JSON.parse(match[0]);
+    const data = JSON.parse(jsonStr);
 
     const vinOk    = data.vin && /^[A-HJ-NPR-Z0-9]{17}$/i.test(data.vin);
     const makeOk   = data.make && data.make.trim().length > 0;
@@ -180,10 +180,10 @@ SKU is the battery part/model number (e.g. "646", "668", "NS70", "DIN88", "F668P
           ],
         }],
       });
-      const text  = response.content.find(b => b.type === 'text')?.text || '';
-      const match = text.match(/\{[\s\S]*?\}/);
-      if (!match) return null;
-      data = JSON.parse(match[0]);
+      const text    = response.content.find(b => b.type === 'text')?.text || '';
+      const jsonStr = extractJson(text);
+      if (!jsonStr) return null;
+      data = JSON.parse(jsonStr);
     }
 
     if (!data || data.error) return null;
@@ -201,8 +201,19 @@ SKU is the battery part/model number (e.g. "646", "668", "NS70", "DIN88", "F668P
   }
 }
 
+function extractJson(text) {
+  const start = text.indexOf('{');
+  if (start === -1) return null;
+  let depth = 0;
+  for (let i = start; i < text.length; i++) {
+    if (text[i] === '{') depth++;
+    else if (text[i] === '}' && --depth === 0) return text.slice(start, i + 1);
+  }
+  return null;
+}
+
 function parseSpecsJson(text) {
-  const m = text.match(/\{[^{}]*\}/);
+  const m = extractJson(text);
   if (!m) return null;
   try {
     const data = JSON.parse(m[0]);
@@ -218,6 +229,13 @@ function parseSpecsJson(text) {
 // In-memory cache: "make|model|year" → { ah, cca, is_start_stop, cachedAt }
 const oemCache = new Map();
 const OEM_CACHE_TTL_MS = 7 * 24 * 60 * 60 * 1000; // 7 days
+
+setInterval(() => {
+  const cutoff = Date.now() - OEM_CACHE_TTL_MS;
+  for (const [key, entry] of oemCache) {
+    if (entry.cachedAt < cutoff) oemCache.delete(key);
+  }
+}, 60 * 60 * 1000); // sweep hourly
 
 async function findOEMBatterySpecs(make, model, year, cc) {
   const vehicleDesc = `${year ? year + ' ' : ''}${make} ${model}${cc ? ` ${cc}cc` : ''}`;
@@ -253,40 +271,23 @@ async function findOEMBatterySpecs(make, model, year, cc) {
   }
 
   // Fallback: web search (for obscure or very new models not in Sonnet's training data)
+  // web_search_20250305 is a server-side built-in tool — one API call handles search + answer
   console.log(`[OEM] Knowledge miss — falling back to web search for ${vehicleDesc}`);
   try {
-    const messages = [{
-      role: 'user',
-      content: `Search for the original OEM battery specifications for a ${vehicleDesc}. Find the Ah (amp-hour) rating, CCA (cold cranking amps, SAE standard), and whether this vehicle has a Start/Stop (idle-stop) system that requires an AGM battery. After searching, reply ONLY with JSON: ${jsonSpec} or {"error":"not_found"}.`,
-    }];
-
-    for (let turn = 0; turn < 5; turn++) {
-      const response = await client.messages.create({
-        model: 'claude-sonnet-4-6',
-        max_tokens: 1024,
-        tools: [{ type: 'web_search_20250305', name: 'web_search' }],
-        messages,
-      });
-
-      if (response.stop_reason === 'end_turn') {
-        const text   = response.content.find(b => b.type === 'text')?.text || '';
-        const result = parseSpecsJson(text);
-        if (result) {
-          oemCache.set(cacheKey, { ...result, cachedAt: Date.now() });
-          return result;
-        }
-        break;
-      }
-
-      if (response.stop_reason === 'tool_use') {
-        messages.push({ role: 'assistant', content: response.content });
-        const toolResults = response.content
-          .filter(b => b.type === 'tool_use')
-          .map(b => ({ type: 'tool_result', tool_use_id: b.id, content: '' }));
-        messages.push({ role: 'user', content: toolResults });
-      } else {
-        break;
-      }
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-6',
+      max_tokens: 1024,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{
+        role: 'user',
+        content: `Search for the original OEM battery specifications for a ${vehicleDesc}. Find the Ah (amp-hour) rating, CCA (cold cranking amps, SAE standard), and whether this vehicle has a Start/Stop (idle-stop) system that requires an AGM battery. After searching, reply ONLY with JSON: ${jsonSpec} or {"error":"not_found"}.`,
+      }],
+    });
+    const text   = response.content.find(b => b.type === 'text')?.text || '';
+    const result = parseSpecsJson(text);
+    if (result) {
+      oemCache.set(cacheKey, { ...result, cachedAt: Date.now() });
+      return result;
     }
   } catch (err) {
     console.error('[OEM] Web search error:', err.message);

@@ -27,9 +27,9 @@ function handlePickMakeNumber(from, msg, session) {
     clearSession(from);
     return (
       `Please contact us directly and our team will find the right battery for your vehicle.\n\n` +
-      `📞 *(010) 746 6260*\n` +
-      `💬 *+27 87 250 2643*\n\n` +
-      `🕒 Mon–Fri: 08:00–17:30 | Sat: 08:00–14:00\n\n` +
+      `📞 *011 312 4743*\n` +
+      `📍 35 Richard Drive, Halfway House, Midrand\n\n` +
+      `🕒 Mon–Fri: 08:00–17:30 | Sat: 08:00–15:00 | Sun: 09:00–13:00\n\n` +
       `_Reply *menu* to start over._`
     );
   }
@@ -120,7 +120,7 @@ async function handleLicenceDisc(from, message, session, mediaUrl, mediaId = nul
           (labelLine ? `_Scanned: ${labelLine}_\n\n` : '\n') +
           `Here are the matching options for *SKU ${catalogueResult.sku}*:\n\n` +
           `${options}\n\n` +
-          `_Prices exclusive to First Battery Woodmead_\n\n` +
+          `_Prices exclusive to ${process.env.BUSINESS_NAME || 'Midrand Midas'}_\n\n` +
           `Which works best for you? I can arrange fitment or delivery 😊`
         );
       }
@@ -132,8 +132,8 @@ async function handleLicenceDisc(from, message, session, mediaUrl, mediaId = nul
         `${batteryLabel.ah ? `, ${batteryLabel.ah}Ah` : ''}.\n\n` +
         `Unfortunately that SKU isn't in our current catalogue. ` +
         `Please call us and our team will source the right replacement:\n\n` +
-        `📞 *(010) 746 6260*\n` +
-        `🗺️ https://share.google/csvciyYZ7nWOaoYmi`
+        `📞 *011 312 4743*\n` +
+        `🗺️ https://share.google/NhhRo4vEsA2hy86wr`
       );
     }
 
@@ -141,7 +141,7 @@ async function handleLicenceDisc(from, message, session, mediaUrl, mediaId = nul
     return (
       `📸 Thanks for the image! I wasn't able to read the vehicle or battery details from it.\n\n` +
       `No worries — just type your *vehicle make, model and year* and I'll find the right battery in seconds. 🔋\n\n` +
-      `_Or call us directly:_ 📞 *(010) 746 6260*`
+      `_Or call us directly:_ 📞 *011 312 4743*`
     );
   }
 
