@@ -35,8 +35,7 @@ function aiGreeting(name) {
     `Hi${n}! 👋 I'm MAC, your Midrand Midas AI Assistant.\n\n` +
     `I can help you find the correct battery for your vehicle and give you an instant quote. 🔋\n\n` +
     `What can I help you with today?\n\n` +
-    `_📸 Send a photo of your *licence disc* — I'll identify your vehicle instantly!_\n` +
-    `_Store details? Reply *2*  |  Contact us? Reply *0*_`
+    `_Store details & contact? Reply *0*_`
   );
 }
 
