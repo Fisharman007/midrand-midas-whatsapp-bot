@@ -6,6 +6,11 @@ const MAX_LOG_ENTRIES = 500;
 // In-memory ring buffer of recent conversation turns
 const logBuffer = [];
 
+// In-memory ring buffer of leads (parts quotes, etc.) — kept separate from
+// logBuffer because leads need the customer's FULL number for follow-up,
+// unlike the masked general chat log.
+const leadBuffer = [];
+
 function maskPhone(from) {
   if (!from || from.length < 4) return '****';
   return '****' + from.slice(-4);
@@ -37,6 +42,25 @@ function getRecentLogs(limit = 100) {
   return logBuffer.slice(-limit).reverse();
 }
 
+function logLead({ from, profileName, type, request }) {
+  const entry = {
+    ts:      new Date().toISOString(),
+    from,    // full number, intentionally unmasked — staff need it to follow up
+    profile: profileName || '',
+    type:    type || 'general',
+    request,
+  };
+
+  leadBuffer.push(entry);
+  if (leadBuffer.length > MAX_LOG_ENTRIES) leadBuffer.shift();
+
+  console.log('[LEAD]', JSON.stringify(entry));
+}
+
+function getRecentLeads(limit = 100) {
+  return leadBuffer.slice(-limit).reverse();
+}
+
 function getStats() {
   const total = logBuffer.length;
   if (total === 0) return { total: 0 };
@@ -66,4 +90,4 @@ function getStats() {
   };
 }
 
-module.exports = { logTurn, getRecentLogs, getStats };
+module.exports = { logTurn, getRecentLogs, getStats, logLead, getRecentLeads };

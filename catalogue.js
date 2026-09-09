@@ -26,6 +26,20 @@ function skuKey(val) {
   return val?.toString().trim().toLowerCase() || '';
 }
 
+// All batteries carry a nationwide warranty — normalise supplier text to say so
+// even when the source sheet just has e.g. "25 MONTH".
+function formatWarranty(raw) {
+  const s = (raw || '').toString().trim();
+  if (!s) return s;
+  if (/nationwide/i.test(s)) return s;
+
+  const monthMatch = s.match(/^(\d+)\s*-?\s*months?$/i);
+  if (monthMatch) return `${monthMatch[1]}-Month Nationwide Warranty`;
+
+  if (/warranty/i.test(s)) return s.replace(/warranty/i, 'Nationwide Warranty');
+  return `${s} — Nationwide Warranty`;
+}
+
 function loadData() {
   const workbook = XLSX.readFile(CATALOGUE_PATH);
 
@@ -70,7 +84,7 @@ function loadData() {
         length:         r.length  !== '' ? r.length  : undefined,
         width:          r.width   !== '' ? r.width   : undefined,
         height:         r.height  !== '' ? r.height  : undefined,
-        warrantyperiod: (r.warrantyperiod || '').toString().trim(),
+        warrantyperiod: formatWarranty(r.warrantyperiod),
       };
 
       if (!priceMap[sku]) priceMap[sku] = [];
