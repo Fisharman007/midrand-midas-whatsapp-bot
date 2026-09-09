@@ -257,7 +257,7 @@ function formatSpecifics(specifics) {
 }
 
 function formatResult(b) {
-  const businessName = process.env.BUSINESS_NAME || 'First Battery Woodmead';
+  const businessName = process.env.BUSINESS_NAME || 'Midrand Midas';
   const lines = [];
 
   lines.push('🔋 *Great news — here\'s what we have for you!*');
@@ -294,7 +294,7 @@ function formatResult(b) {
   lines.push('ℹ️ All prices include the trade-in of your old battery.');
   lines.push(`💲 Prices are exclusive to ${businessName}.`);
   lines.push('_Budget a little tight? We accept *PayJustNow* & *Payflex* — buy now, pay later!_');
-  lines.push('🔧 *Onsite fitment available* at our Woodmead branch.');
+  lines.push('🔧 *Onsite fitment available* at our Midrand Midas branch.');
   lines.push('⚠️ Vehicles fitted with Start/Stop systems require AGM batteries.');
   lines.push('');
   lines.push('*0* — Contact Us | *menu* — Start Over');

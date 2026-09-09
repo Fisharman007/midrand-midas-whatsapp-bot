@@ -19,7 +19,7 @@ const PORT = process.env.PORT || 3000;
 const RESET_TRIGGERS = new Set(['menu', 'hi', 'hello', 'hey', 'start', 'hola', 'howzit']);
 
 function contactCard() {
-  const biz = process.env.BUSINESS_NAME || 'First Battery Woodmead';
+  const biz = process.env.BUSINESS_NAME || 'Midrand Midas';
   return (
     `Need help? Our team is ready for you! 😊\n\n` +
     `📞 *Call us:* 011 312 4743\n` +
