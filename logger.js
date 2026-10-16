@@ -44,6 +44,16 @@ function getRecentLogs(limit = 100) {
   return logBuffer.slice(-limit).reverse();
 }
 
+// Customer-typed text goes into a Google Sheet — a leading = + - @ (or tab/CR) would make
+// Sheets treat the cell as a formula, so prefix those with ' to force plain text.
+function sheetSafe(entry) {
+  const out = {};
+  for (const [k, v] of Object.entries(entry)) {
+    out[k] = typeof v === 'string' && /^[=+\-@\t\r]/.test(v) ? "'" + v : v;
+  }
+  return out;
+}
+
 function logLead({ from, profileName, type, request }) {
   const entry = {
     ts:      new Date().toISOString(),
@@ -56,14 +66,14 @@ function logLead({ from, profileName, type, request }) {
   leadBuffer.push(entry);
   if (leadBuffer.length > MAX_LOG_ENTRIES) leadBuffer.shift();
 
-  console.log('[LEAD]', JSON.stringify(entry));
+  console.log('[LEAD]', JSON.stringify({ ...entry, from: maskPhone(from) }));
 
   // Best-effort durable copy — a Google Sheet survives server restarts/redeploys,
   // unlike leadBuffer above. Fire-and-forget: never let a Sheets hiccup slow down
   // or break the customer's WhatsApp reply.
   const sheetUrl = process.env.LEADS_SHEET_WEBHOOK_URL;
   if (sheetUrl) {
-    axios.post(sheetUrl, entry, { timeout: 8000 })
+    axios.post(sheetUrl, sheetSafe(entry), { timeout: 8000 })
       .catch(err => console.error('[LEAD] Failed to sync to Google Sheet:', err.message));
   }
 }
