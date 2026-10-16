@@ -1,10 +1,17 @@
 // Conversation logger — stores recent turns in memory and emits structured JSON to console.
 // Railway captures all stdout so logs are searchable in the Railway dashboard.
 
+const axios = require('axios');
+
 const MAX_LOG_ENTRIES = 500;
 
 // In-memory ring buffer of recent conversation turns
 const logBuffer = [];
+
+// In-memory ring buffer of leads (parts quotes, etc.) — kept separate from
+// logBuffer because leads need the customer's FULL number for follow-up,
+// unlike the masked general chat log.
+const leadBuffer = [];
 
 function maskPhone(from) {
   if (!from || from.length < 4) return '****';
@@ -37,6 +44,34 @@ function getRecentLogs(limit = 100) {
   return logBuffer.slice(-limit).reverse();
 }
 
+function logLead({ from, profileName, type, request }) {
+  const entry = {
+    ts:      new Date().toISOString(),
+    from,    // full number, intentionally unmasked — staff need it to follow up
+    profile: profileName || '',
+    type:    type || 'general',
+    request,
+  };
+
+  leadBuffer.push(entry);
+  if (leadBuffer.length > MAX_LOG_ENTRIES) leadBuffer.shift();
+
+  console.log('[LEAD]', JSON.stringify(entry));
+
+  // Best-effort durable copy — a Google Sheet survives server restarts/redeploys,
+  // unlike leadBuffer above. Fire-and-forget: never let a Sheets hiccup slow down
+  // or break the customer's WhatsApp reply.
+  const sheetUrl = process.env.LEADS_SHEET_WEBHOOK_URL;
+  if (sheetUrl) {
+    axios.post(sheetUrl, entry, { timeout: 8000 })
+      .catch(err => console.error('[LEAD] Failed to sync to Google Sheet:', err.message));
+  }
+}
+
+function getRecentLeads(limit = 100) {
+  return leadBuffer.slice(-limit).reverse();
+}
+
 function getStats() {
   const total = logBuffer.length;
   if (total === 0) return { total: 0 };
@@ -66,4 +101,4 @@ function getStats() {
   };
 }
 
-module.exports = { logTurn, getRecentLogs, getStats };
+module.exports = { logTurn, getRecentLogs, getStats, logLead, getRecentLeads };

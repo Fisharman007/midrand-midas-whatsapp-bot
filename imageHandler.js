@@ -120,7 +120,7 @@ async function handleLicenceDisc(from, message, session, mediaUrl, mediaId = nul
           (labelLine ? `_Scanned: ${labelLine}_\n\n` : '\n') +
           `Here are the matching options for *SKU ${catalogueResult.sku}*:\n\n` +
           `${options}\n\n` +
-          `_Prices exclusive to ${process.env.BUSINESS_NAME || 'Midrand Midas'}_\n\n` +
+          `_All batteries subject to stock availability. Price includes trade-in of your old battery — no trade-in on hand? A battery surcharge applies. Exclusive to ${process.env.BUSINESS_NAME || 'Midrand Midas'} — T&Cs apply._\n\n` +
           `Which works best for you? I can arrange fitment or delivery 😊`
         );
       }

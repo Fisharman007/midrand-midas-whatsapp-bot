@@ -1,7 +1,8 @@
 const Anthropic = require('@anthropic-ai/sdk');
 const { getUniqueMakes, searchByMakeAndDescription, findBySKU, findBySpecs } = require('./catalogue');
 const { searchKnowledge } = require('./knowledge');
-const { logTurn } = require('./logger');
+const { logTurn, logLead } = require('./logger');
+const { rememberSkus } = require('./priceGuard');
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
@@ -19,6 +20,8 @@ function buildSystemPrompt() {
 
 Your job is to help customers find the right battery for their vehicle and give them pricing from the catalogue.
 
+*CRITICAL — check every incoming message for this before anything else:* if the customer names a brand we don't stock (Bosch, Energizer, Motolite, or anything other than Varta/Willard/Sabat/Grand Prix/Excide), the FIRST SENTENCE of your reply must acknowledge it — e.g. "We don't stock Bosch, but our *VARTA* is genuine OEM quality" — before you do anything else with that message (searching, asking for engine size, presenting a variant menu, etc.). This applies even when the same message also gives you enough info to search immediately — acknowledge the brand, THEN continue into the search in that same reply.
+
 *Store Details:*
 ━━━━━━━━━━━━━━
 📍 35 Richard Drive, Halfway House, Midrand
@@ -34,6 +37,8 @@ Your job is to help customers find the right battery for their vehicle and give 
 - Keep energy positive even when delivering bad news — always offer a next step
 - Short punchy sentences work best on WhatsApp — no long paragraphs
 - Mirror the customer's language and energy — if they're casual, be casual; if they're stressed, be calm and reassuring
+- *Sales logic, always:* act like an experienced in-person salesperson at the counter — ask ONE question at a time and wait for the answer before asking the next thing. Never stack multiple questions into a single message just because you need several pieces of info.
+- *Make it easy to answer:* whenever a question has a small set of likely answers (2-4 options — e.g. yes/no, pick a variant, collect-or-deliver), lay them out as a numbered list (1️⃣ 2️⃣ 3️⃣) so the customer can just reply with a number instead of typing a full sentence. Only ask a fully open-ended question when the answer space is genuinely unbounded (an address, a part name, a vehicle model, etc.) — free-text replies to a numbered question still work fine, so this never blocks anyone.
 
 *Your image capabilities (always mention these when asking for vehicle details):*
 - 📸 Customers can send a photo of their *vehicle licence disc* — you will extract the make, model and year automatically
@@ -43,10 +48,24 @@ Your job is to help customers find the right battery for their vehicle and give 
 *Starting a conversation:*
 The customer has been greeted and asked "What car do you need a battery for?" Act on their very first reply — do not ask a sub-menu question first:
 - *Vehicle info* (make/model/year, e.g. "VW Polo 2019", "Toyota Hilux", "my BMW 3 Series 2018") → immediately call search_vehicles. Do not ask anything else first.
+  - *German/premium makes (BMW, Mercedes-Benz, Audi, etc.):* our catalogue lists these by engine code (e.g. "320i", "520d", "C200"), not by series/class name ("3 Series", "E-Class"). If a customer gives you a series/class name and the search comes back empty, don't just say it's not found — use your general knowledge of that make's range to retry with the likely engine code(s) for that series and year (e.g. "3 Series 2019" → try "320i", then "318i", "330i"). If you're not confident which engine, ask the customer for the exact badge on the back of the car (e.g. "320i", "520d") instead of giving up.
 - *Battery SKU or size* (e.g. "652", "646AGM", "I need a 619") → immediately call get_prices. Do not ask for make and model.
-- *Ah or CCA specs* (e.g. "60Ah", "60 amp", "540 CCA", "I need a 70Ah battery") → immediately call search_by_specs. Do NOT ask for make and model — just find and list the matching SKUs with prices.
+- *Ah or CCA specs* (e.g. "60Ah", "60 amp", "540 CCA", "I need a 70Ah battery") → immediately call search_by_specs and present the results in the same message. Do NOT ask for make/model, and do NOT ask whether they have Stop/Start first either — the customer already told you the spec they want, so just show them what matches it.
 - *Partial info* (e.g. just "Toyota" with no model or year) → ask ONE short clarifying question: "Which Toyota model and year? _e.g. Hilux 2019, Fortuner 2021, Corolla 2020_"
 - *Photo sent* → the image is handled separately and you will receive context about what was extracted — continue from there
+- *Parts request* (mentions of any non-battery part — brake pads, filters, wipers, headlights, belts, etc.) → begin the *Parts Quote conversation* described below, whether they came from the menu or typed it directly
+- *Mentions a brand we don't stock* (Bosch, Energizer, Motolite, etc.) — even combined with vehicle info in the same message: address the brand FIRST, in one sentence, before anything else — e.g. "We don't stock Bosch, but our *VARTA* is genuine OEM quality — let me find the right spec for your BMW!" — then continue with the vehicle lookup in that same reply. Never let this slip past unaddressed just because a vehicle lookup also needs doing. (We DO stock Varta, Willard, Sabat, Grand Prix and Excide — those need no special handling, just search normally.)
+
+*Parts Quote conversations:*
+We don't have a parts catalogue — parts quotes are handled by our human parts team, but you run the intake like a salesperson at the counter, one question at a time:
+1. Ask whether they'll *collect in-store* or need it *delivered*, as a numbered choice, e.g. "1️⃣ Collect in-store (only at Midrand Midas) 2️⃣ Deliver to me". Always state clearly that collection is *only available at Midrand Midas* — no other branch.
+2. If they want delivery, ask for their delivery address next (its own message, after they answer question 1).
+3. Ask what vehicle (make, model, year) the parts are for.
+4. Ask what specific part(s) they need.
+5. Once you have all of it — fulfilment method (+ address if delivering), vehicle, and part(s) — call submit_parts_lead exactly once. Then close warmly along the lines of "Thank you! We're now processing your quote." and give them 011 312 4743 for anything urgent. Do NOT promise a timeframe or say things like "shortly", "soon", "we'll get back to you within X" — we don't control how fast the parts team responds, so don't set an expectation we might miss.
+Call submit_parts_lead *only once* per request. The moment its result comes back, write your closing message in that same turn — do not call it again, and do not call any other tool afterward.
+Don't skip ahead or ask two of these in one message, even if the customer's first message already answers more than one — just acknowledge what they told you and ask the next missing piece.
+*CRITICAL:* the customer's request only reaches our parts team if you actually call submit_parts_lead. NEVER say the request is "submitted", "captured", "sent to the team", "all done" or similar unless you have called submit_parts_lead in that exact same turn, before writing your reply. If you're about to tell the customer you have everything you need, that is your cue to call the tool right then — not to just say so.
 
 *How to find the battery:*
 1. As soon as you have make and model, call search_vehicles — don't wait for more info unless truly needed
@@ -65,13 +84,15 @@ The customer has been greeted and asked "What car do you need a battery for?" Ac
 
 *AGM batteries:*
 - Do NOT ask the customer upfront whether they have a Stop/Start system — determine it from the catalogue
-- If search_vehicles returns an AGM SKU for their vehicle, present it as the required option and explain briefly:
+- *CRITICAL — never skip this:* if search_vehicles returns an AGM SKU for their vehicle, your very next message MUST open with the AGM explanation before showing any prices — AGM batteries cost noticeably more, and presenting the price list without explaining why looks like a mistake or upsell to the customer. Lead with:
   "Since your [vehicle] has a Stop/Start system, it needs an *AGM battery* — these are built to handle the engine restarting dozens of times per trip. A standard battery would wear out quickly and could damage your electronics. Good news: we've got exactly what you need! 🔋"
+  ...then present the options as normal.
 - If a customer explicitly mentions Stop/Start or Start/Stop in their message, acknowledge it immediately and note AGM is required before searching
 
 *Presenting battery options:*
 - If the customer found their battery via vehicle search: open with excitement and their name — e.g. "🎉 Found it, [Name]! Perfect match for your [Year] [Make] [Model] 🔋"
 - If the customer specified a SKU directly: open cleanly — e.g. "🔋 Here's what we have for SKU [SKU]:" — NO tier labels, NO "Recommended", NO "Budget pick". They know what they want.
+- *VARTA is our OEM pick — always push it when it's an option:* if VARTA appears among the results for a SKU, list it *first* and tag it "⭐ *OEM* — the brand many vehicles are fitted with from the factory." This is the one exception to the "no tier labels" rule above — VARTA always gets this tag, even on a direct SKU search.
 - Use this exact format for each option (with ━━ dividers between them):
 
   ━━━━━━━━━━━━━━
@@ -90,6 +111,7 @@ The customer has been greeted and asked "What car do you need a battery for?" Ac
 - After the options, add ONE brief comparison tip (not a label) — e.g. "💡 _Both fit perfectly — the Gold gives you 6 extra months of warranty cover._" Only include this if there are 2+ options and there's a meaningful difference (price, warranty, CCA) worth pointing out.
 - Follow with a clear CTA: "Reply *1* or *2* to choose 👆" (adjust numbers to match how many options there are)
 - Then on two compact lines: "🔧 *Fitment while you wait* at our Woodmead branch" and "_*PayJustNow* & *Payflex* accepted — buy now, pay later!_"
+- Always finish with this exact disclaimer line: "_All batteries subject to stock availability. Price includes trade-in of your old battery — no trade-in on hand? A battery surcharge applies. Exclusive to ${biz} — T&Cs apply._"
 - If AGM is required, present it as the only correct option and explain why briefly — keep it informative, not alarming
 - If only one option exists, skip the numbered format and CTA — just present it cleanly and ask if they'd like to go ahead
 - Do NOT use markdown tables
@@ -111,10 +133,13 @@ The customer has been greeted and asked "What car do you need a battery for?" Ac
 - Use WhatsApp formatting: *bold* for emphasis, _italic_ for tips/notes
 - Keep messages concise — this is WhatsApp, not email
 - Reply in the same language the customer uses — support any language, not just English, Afrikaans or Zulu
-- Never invent prices — always call get_prices
+- Never invent prices — they come only from get_prices / search_by_specs results in this conversation. Never estimate, round, discount or quote a price from memory or general knowledge
+- EVERY time you state a price — the first quote, a multi-option quote, or a price you repeat later in the conversation — include this exact line right after it: "_Price includes trade-in of your old battery — no trade-in on hand? A battery surcharge applies._" Never state a surcharge amount. This applies even when only one option is shown.
+- If a tool returns an error, do not guess its result — offer to have our team help on 011 312 4743 instead
 - Never invent or guess warranty periods — warranty information comes from get_prices only; never state generic ranges like "12/18/24 months" unless confirmed by a tool call
-- If a customer asks for a specific brand (e.g. Bosch, Energizer, Varta, Motolite, Willard): you MUST address the brand question BEFORE doing any vehicle lookup. Acknowledge it in one sentence, then move on — e.g. "We don't stock Bosch, but our *Raylight Gold* is a top-quality alternative — let me find the right spec for your BMW!" Do not skip this even if the vehicle is mentioned in the same message.
-- If a vehicle is not found, try list_makes to confirm the make spelling, or try a shorter model keyword
+- Unstocked-brand mentions: see *Starting a conversation* above — always address them first, never silently proceed straight to the vehicle lookup.
+- If a vehicle is not found, try list_makes to confirm the make spelling, or try a shorter model keyword taken from the customer's own words (e.g. "Hilux" from "Hilux 2.4 GD-6")
+- NEVER search for a different model than the one the customer gave, even a "similar" or sibling car (e.g. never search "Golf" or "Citi" for a Tazz) — related models can take a different battery and price. If their model isn't found, treat it as not found (below)
 - If still not found, respond warmly:
   "Hmm, I couldn't find your [Make] [Model] in our system 🔍
 
@@ -128,6 +153,7 @@ The customer has been greeted and asked "What car do you need a battery for?" Ac
 - Whenever you mention visiting the store or give directions, always include the Google Maps link: https://share.google/NhhRo4vEsA2hy86wr
 - Prices are in South African Rand (R), include VAT, and include trade-in of the old battery
 - Prices are exclusive to ${biz}
+- All batteries are subject to stock availability — always include the disclaimer line (see formatting rules above) whenever you quote a price
 - Call tools in parallel where possible — if you already know the SKU from search_vehicles, call get_prices in the same turn rather than waiting for the next round`;
 }
 
@@ -184,9 +210,37 @@ const TOOLS = [
       required: [],
     },
   },
+  {
+    name: 'submit_parts_lead',
+    description: 'Submits a completed parts quote request to the human parts team. Call this exactly once, only after you have gathered ALL details: fulfilment method, delivery address (if delivering), vehicle, and the part(s) needed.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        fulfilment:      { type: 'string', enum: ['collect', 'deliver'], description: 'Whether the customer will collect in-store at Midrand Midas or needs delivery' },
+        deliveryAddress: { type: 'string', description: 'Delivery address — required if fulfilment is "deliver"' },
+        vehicle:         { type: 'string', description: 'Vehicle make, model and year, e.g. "2018 Toyota Hilux 2.4 GD-6"' },
+        parts:           { type: 'string', description: 'The specific part(s) the customer needs' },
+      },
+      required: ['fulfilment', 'vehicle', 'parts'],
+    },
+  },
 ];
 
-function executeTool(name, input) {
+// True if at least one word of the searched model is something the customer actually said —
+// allowing typo fixes ("Corola" -> "Corolla") but not swapping in another car ("Tazz" -> "Golf").
+// Engine codes with digits ("320i", "C200") are exempt — the BMW/Mercedes series→engine-code retry relies on them.
+function customerMentioned(model, customerText) {
+  if (!customerText) return true;
+  const words  = customerText.toLowerCase().match(/[a-z0-9]+/g) || [];
+  const tokens = (model || '').toLowerCase().match(/[a-z0-9]+/g) || [];
+  const wordy  = tokens.filter(t => /^[a-z]{2,}$/.test(t));
+  if (wordy.length === 0) return true;
+  return wordy.some(t => words.some(w =>
+    w === t || (t.length >= 4 && w.length >= 4 && w.slice(0, 4) === t.slice(0, 4))
+  ));
+}
+
+function executeTool(name, input, ctx) {
   if (name === 'search_knowledge') {
     const results = searchKnowledge(input.query);
     if (results.length === 0) return { found: false, message: 'No matching knowledge base entries found.' };
@@ -200,6 +254,14 @@ function executeTool(name, input) {
 
   if (name === 'search_vehicles') {
     const { make, model, year } = input;
+    if (!customerMentioned(model, ctx?.customerText)) {
+      console.warn('[Tool] search_vehicles blocked — model not mentioned by customer:', model);
+      return {
+        found: false,
+        blocked: true,
+        message: `The customer never mentioned "${model}". Never search for a different or "similar" model than the one they gave — a sibling model can take a different battery. If their own model isn't found, use the not-found reply.`,
+      };
+    }
     const results = searchByMakeAndDescription(make, model);
     if (results.length === 0) return { found: false, results: [] };
 
@@ -241,6 +303,7 @@ function executeTool(name, input) {
         note: 'SKU exists in vehicle list but has no pricing on file. Tell the customer warmly that we don\'t currently stock this one but our team can source it — give them the phone number 011 312 4743.',
       };
     }
+    rememberSkus(ctx?.from, [result.sku]);
     return {
       found: true,
       sku: result.sku,
@@ -264,6 +327,7 @@ function executeTool(name, input) {
     if (ah == null && cca == null) return { found: false, message: 'Provide at least an Ah rating or CCA value.' };
     const results = findBySpecs({ ah, cca });
     if (results.length === 0) return { found: false, message: 'No batteries found matching those specs. Try adjusting the values slightly.' };
+    rememberSkus(ctx?.from, results.map(r => r.sku));
     return {
       found: true,
       count: results.length,
@@ -283,7 +347,34 @@ function executeTool(name, input) {
     };
   }
 
+  if (name === 'submit_parts_lead') {
+    const { fulfilment, deliveryAddress, vehicle, parts } = input;
+    const request = [
+      `Vehicle: ${vehicle}`,
+      `Part(s): ${parts}`,
+      fulfilment === 'deliver'
+        ? `Deliver to: ${deliveryAddress || '(address not captured)'}`
+        : 'Collect in-store at Midrand Midas',
+    ].join('\n');
+    logLead({ from: ctx.from, profileName: ctx.profileName, type: 'parts', request });
+    return { success: true };
+  }
+
   return { error: `Unknown tool: ${name}` };
+}
+
+// Brands we don't stock — mentioned in the same message as vehicle info, the model
+// reliably jumps straight into the tool-calling search and never circles back to
+// acknowledge the brand, even with an explicit per-turn reminder injected into the
+// prompt (verified: both static prompt wording and a dynamic [System: ...] note
+// got the acknowledgement into well under half of test replies). This is a real
+// business requirement — customers asking about a brand should never be silently
+// ignored — so it's guaranteed in code instead of left to the model.
+const UNSTOCKED_BRANDS = ['bosch', 'energizer', 'motolite'];
+
+function detectUnstockedBrandMention(message) {
+  const lower = message.toLowerCase();
+  return UNSTOCKED_BRANDS.find(b => new RegExp(`\\b${b}\\b`).test(lower));
 }
 
 async function runAIConversation(from, message, history, profileName) {
@@ -299,6 +390,11 @@ async function runAIConversation(from, message, history, profileName) {
     }] : []),
   ];
 
+  const brandMention = detectUnstockedBrandMention(message);
+
+  // Everything the customer has said, so search_vehicles can refuse a model they never mentioned
+  const customerText = [...history.filter(m => m.role === 'user' && typeof m.content === 'string').map(m => m.content), message].join(' ');
+
   // Tool call loop uses a working copy; only clean text turns go into persistent history
   const workingMessages = [
     ...history,
@@ -310,6 +406,7 @@ async function runAIConversation(from, message, history, profileName) {
   let totalInputTokens  = 0;
   let totalOutputTokens = 0;
   const toolsUsed = [];
+  let agmDetected = false;
 
   while (rounds < MAX_TOOL_ROUNDS) {
     rounds++;
@@ -332,7 +429,18 @@ async function runAIConversation(from, message, history, profileName) {
       .filter(b => b.type === 'tool_use')
       .map(b => {
         toolsUsed.push(b.name);
-        const raw = JSON.stringify(executeTool(b.name, b.input));
+        console.log('[Tool]', b.name, JSON.stringify(b.input));
+        let result;
+        try {
+          result = executeTool(b.name, b.input, { from, profileName, customerText });
+        } catch (err) {
+          console.error('[Tool] ' + b.name + ' failed:', err.message);
+          result = { error: `${b.name} failed. Do not guess the result — offer to have our team help instead.` };
+        }
+        const raw = JSON.stringify(result);
+        // Only get_prices confirms AGM pricing is actually being shown — search_vehicles
+        // can return an AGM SKU as just one of several unconfirmed variant options.
+        if (b.name === 'get_prices' && raw.toUpperCase().includes('AGM')) agmDetected = true;
         const content = raw.length > MAX_TOOL_RESULT_CHARS
           ? raw.slice(0, MAX_TOOL_RESULT_CHARS) + '...[truncated]'
           : raw;
@@ -343,8 +451,28 @@ async function runAIConversation(from, message, history, profileName) {
   }
 
   const textBlock = response.content.find(b => b.type === 'text');
-  const reply = textBlock?.text
-    || 'Sorry, something went wrong. Please try again or call us on *011 312 4743*.';
+  // If the lead was actually submitted but the model failed to produce a closing
+  // message (e.g. ran out of tool rounds), don't scare the customer with a generic
+  // error — the request already reached the parts team.
+  let reply = textBlock?.text
+    || (toolsUsed.includes('submit_parts_lead')
+      ? "Thank you! We're now processing your quote. If you don't hear from us, give us a call: *011 312 4743*."
+      : 'Sorry, something went wrong. Please try again or call us on *011 312 4743*.');
+
+  // Guaranteed brand acknowledgement — see note on detectUnstockedBrandMention above.
+  // Only prepend if the model didn't already address it on its own.
+  if (brandMention && !reply.toLowerCase().includes(brandMention)) {
+    const brandTitleCase = brandMention.charAt(0).toUpperCase() + brandMention.slice(1);
+    reply = `We don't stock ${brandTitleCase}, but our *VARTA* is genuine OEM quality! 🔋\n\n${reply}`;
+  }
+
+  // Guaranteed AGM explanation — an AGM battery costs noticeably more, and the model
+  // skips this explanation often enough (~1 in 3 test replies) that a silent price
+  // jump risks looking like a mistake or upsell. Skip if the customer already typed
+  // "AGM"/Stop-Start themselves (they clearly already know) or the reply covers it.
+  if (agmDetected && !/agm/i.test(message) && !/\bagm\b|stop.?start/i.test(reply)) {
+    reply = `Since your vehicle has a Stop/Start system, it needs an *AGM battery* — these are built to handle the engine restarting dozens of times per trip. A standard battery would wear out quickly and could damage your electronics. Good news: we've got exactly what you need! 🔋\n\n${reply}`;
+  }
 
   // Persist only text turns so history stays clean and token-efficient
   const newHistory = [

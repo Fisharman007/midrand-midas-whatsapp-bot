@@ -6,8 +6,9 @@ const { handleLicenceDisc, handlePickMakeNumber } = require('./imageHandler');
 const { runAIConversation } = require('./aiConversation');
 const { reloadCatalogue } = require('./catalogue');
 const { getSession, updateSession, clearSession } = require('./sessions');
-const { getRecentLogs, getStats } = require('./logger');
+const { getRecentLogs, getStats, getRecentLeads } = require('./logger');
 const { getLastImage } = require('./ai');
+const { guardPrices } = require('./priceGuard');
 const { checkRateLimit, validateTwilioSignature, sanitiseInput, isInputTooLong, checkAdminAuth } = require('./security');
 
 const app = express();
@@ -33,11 +34,22 @@ function aiGreeting(name) {
   const n = name ? ` *${name}*` : '';
   return (
     `Hi${n}! 👋 I'm MAC, your Midrand Midas AI Assistant.\n\n` +
-    `I can help you find the correct battery for your vehicle and give you an instant quote. 🔋\n\n` +
-    `What can I help you with today?\n\n` +
-    `_Store details & contact? Reply *0*_`
+    `How can I help you today?\n\n` +
+    `1️⃣ Battery Quote\n` +
+    `2️⃣ Parts Quote\n` +
+    `3️⃣ Store Details\n\n` +
+    `_Reply with a number, or just tell me what you need 👆_`
   );
 }
+
+function batteryQuotePrompt() {
+  return (
+    `🔋 Great, let's find your battery!\n\n` +
+    `What car do you need a battery for?\n\n` +
+    `_You can type your vehicle details or send a photo of your licence disc / old battery and I'll scan it for you 📸_`
+  );
+}
+
 
 // Load catalogue into memory before the server accepts any requests
 console.log('Loading catalogue...');
@@ -80,8 +92,33 @@ async function handleAIMessage(from, message, profileName) {
 
   if (RESET_TRIGGERS.has(msg)) {
     clearSession(from);
-    updateSession(from, { state: 'AI_CHAT', data: { profileName: name } });
+    updateSession(from, { state: 'MAIN_MENU', data: { profileName: name } });
     return aiGreeting(name);
+  }
+
+  if (session.state === 'MAIN_MENU') {
+    // Only match short, unambiguous menu picks here — a full sentence like
+    // "I need a battery for my Polo" should fall through to the AI below instead.
+    if (msg === '1' || /^batter(y|ies)( quote)?$/i.test(msg)) {
+      updateSession(from, { state: 'AI_CHAT', data: { ...session.data } });
+      return batteryQuotePrompt();
+    }
+    if (msg === '2' || /^parts?( quote)?$/i.test(msg)) {
+      const seedMsg = `[System: Customer selected "Parts Quote". Run the Parts Quote conversation flow described in your instructions — one question at a time, numbered options where there's a small set of answers.]`;
+      const assistantReply = `🔧 Great, let's get you sorted${name ? `, ${name}` : ''}!\n\nFirst up:\n\n1️⃣ Collect in-store _(only at our Midrand Midas branch)_\n2️⃣ Deliver to me\n\n_Reply with a number 👆_`;
+      updateSession(from, {
+        state: 'AI_CHAT',
+        data: { ...session.data, aiHistory: [{ role: 'user', content: seedMsg }, { role: 'assistant', content: assistantReply }] },
+      });
+      return assistantReply;
+    }
+    if (msg === '3' || /^store( details)?$/i.test(msg)) {
+      updateSession(from, { state: 'AI_CHAT', data: { ...session.data } });
+      return contactCard();
+    }
+    // Free text instead of a menu number — treat as a direct battery request (today's default flow)
+    updateSession(from, { state: 'AI_CHAT', data: { ...session.data } });
+    session = getSession(from);
   }
 
   const history = session.data.aiHistory || [];
@@ -127,6 +164,7 @@ app.post('/webhook', async (req, res) => {
     } else {
       responseText = await handleAIMessage(from, incomingMsg, profileName);
     }
+    responseText = guardPrices(from, responseText);
 
     const twiml = new MessagingResponse();
     if (responseText) twiml.message(responseText);
@@ -184,6 +222,7 @@ app.post('/wa-webhook', async (req, res) => {
     } else if (message.type === 'text') {
       responseText = await handleAIMessage(from, message.text?.body || '', profileName);
     }
+    responseText = guardPrices(from, responseText);
 
     if (responseText && phoneNumberId) {
       await sendWhatsAppReply(phoneNumberId, from, responseText);
@@ -229,6 +268,7 @@ app.get('/admin/logs', (req, res) => {
   const limit  = Math.min(parseInt(req.query.limit || '50', 10), 500);
   const logs   = getRecentLogs(limit);
   const stats  = getStats();
+  const pwParam = req.query.pw ? `?pw=${encodeURIComponent(req.query.pw)}` : '';
 
   res.setHeader('Content-Type', 'text/html; charset=utf-8');
   res.send(`<!DOCTYPE html>
@@ -240,6 +280,9 @@ app.get('/admin/logs', (req, res) => {
   <style>
     body{font-family:system-ui,sans-serif;max-width:960px;margin:0 auto;padding:16px;background:#f5f5f5}
     h1{font-size:1.4rem;margin-bottom:8px}
+    .nav{margin-bottom:12px;font-size:.85rem}
+    .nav a{color:#1a73e8;text-decoration:none;margin-right:16px}
+    .nav a:hover{text-decoration:underline}
     .stats{background:#fff;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;gap:24px;flex-wrap:wrap;font-size:.9rem}
     .stat{text-align:center}.stat b{display:block;font-size:1.4rem;color:#1a73e8}
     .card{background:#fff;border-radius:8px;padding:12px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
@@ -253,6 +296,7 @@ app.get('/admin/logs', (req, res) => {
 </head>
 <body>
 <h1>🔋 Conversation Logs</h1>
+<div class="nav"><a href="/admin/logs${pwParam}">💬 All Logs</a><a href="/admin/leads${pwParam}">🎯 Leads</a></div>
 <div class="stats">
   <div class="stat"><b>${stats.total_turns || 0}</b>turns</div>
   <div class="stat"><b>${stats.unique_users || 0}</b>users</div>
@@ -272,6 +316,61 @@ ${logs.map(e => `
   <div class="row"><div class="bubble-u">${escHtml(e.user)}</div></div>
   <div class="row"><div class="bubble-b">${escHtml(e.bot)}</div></div>
 </div>`).join('')}
+</body></html>`);
+});
+
+// --- Admin: leads viewer (parts quotes, etc. — full contact number for follow-up) ---
+app.get('/admin/leads', (req, res) => {
+  if (!checkAdminAuth(req)) {
+    return res.status(401).send('Unauthorised — add ?pw=YOUR_PASSWORD');
+  }
+
+  const limit = Math.min(parseInt(req.query.limit || '50', 10), 500);
+  const leads = getRecentLeads(limit);
+  const pwParam = req.query.pw ? `?pw=${encodeURIComponent(req.query.pw)}` : '';
+
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  res.send(`<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Leads</title>
+  <style>
+    body{font-family:system-ui,sans-serif;max-width:960px;margin:0 auto;padding:16px;background:#f5f5f5}
+    h1{font-size:1.4rem;margin-bottom:8px}
+    .nav{margin-bottom:12px;font-size:.85rem}
+    .nav a{color:#1a73e8;text-decoration:none;margin-right:16px}
+    .nav a:hover{text-decoration:underline}
+    .stats{background:#fff;border-radius:8px;padding:12px 16px;margin-bottom:16px;display:flex;gap:24px;flex-wrap:wrap;font-size:.9rem}
+    .stat{text-align:center}.stat b{display:block;font-size:1.4rem;color:#1a73e8}
+    .card{background:#fff;border-radius:8px;padding:12px 16px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.08)}
+    .meta{font-size:.75rem;color:#666;margin-bottom:6px;display:flex;gap:12px;flex-wrap:wrap}
+    .tag{background:#e8f0fe;color:#1a73e8;border-radius:4px;padding:2px 6px;font-size:.72rem}
+    .request{white-space:pre-wrap;font-size:.9rem;margin-bottom:8px}
+    .wa-link{display:inline-block;background:#25D366;color:#fff;text-decoration:none;padding:4px 10px;border-radius:6px;font-size:.8rem}
+  </style>
+</head>
+<body>
+<h1>🎯 Leads</h1>
+<div class="nav"><a href="/admin/logs${pwParam}">💬 All Logs</a><a href="/admin/leads${pwParam}">🎯 Leads</a></div>
+<div class="stats">
+  <div class="stat"><b>${leads.length}</b>leads</div>
+</div>
+${leads.map(l => {
+  const digits = (l.from || '').replace(/^whatsapp:/, '').replace(/[^\d]/g, '');
+  return `
+<div class="card">
+  <div class="meta">
+    <span>${escHtml(l.ts)}</span>
+    <span class="tag">${escHtml(l.type)}</span>
+    <span>${escHtml(l.profile)}</span>
+    <span>${escHtml(l.from)}</span>
+  </div>
+  <div class="request">${escHtml(l.request)}</div>
+  ${digits ? `<a class="wa-link" href="https://wa.me/${digits}" target="_blank">💬 Reply on WhatsApp</a>` : ''}
+</div>`;
+}).join('') || '<p>No leads yet.</p>'}
 </body></html>`);
 });
 
