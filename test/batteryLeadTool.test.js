@@ -45,6 +45,7 @@ test('submit_battery_lead ignores a phone number or name smuggled into the tool 
 const { ensureBatteryLead } = require('../aiConversation');
 
 test('ensureBatteryLead forces the lead when the reply confirms a pick but the AI skipped the tool', async () => {
+  executeTool('get_prices', { sku: '660AGM' }, ctx); // a quote always comes before a pick
   const calls = [];
   const createMessage = async req => {
     calls.push(req);
@@ -78,4 +79,18 @@ test('the forced lead call is given the exact options last quoted to this custom
     ctx: quoteCtx, createMessage: async r => { req = r; return { content: [] }; } });
   const nudge = req.messages.at(-1).content;
   for (const code of ['646-D52', '646AGMS', 'size 646AGM']) assert.ok(nudge.includes(code), `nudge missing ${code}`);
+});
+
+test('submit_battery_lead refuses a battery size that was not quoted to this customer', () => {
+  const c = { from: 'whatsapp:+27000000888', profileName: 'Q' };
+  executeTool('get_prices', { sku: '646AGM' }, c);
+  const { result } = captureLogs(() => executeTool('submit_battery_lead', { sku: '658AGM', productCode: '658-G14', vehicle: 'x' }, c));
+  assert.equal(result.saved, false);
+});
+
+test('ensureBatteryLead does not force a lead when nothing was quoted to the customer (e.g. a parts confirmation)', async () => {
+  let called = 0;
+  await ensureBatteryLead({ reply: 'Excellent choice — your brake pads request is in!', toolsUsed: [], messages: [], system: [],
+    ctx: { from: 'whatsapp:+27000000999', profileName: 'P' }, createMessage: async () => { called++; return { content: [] }; } });
+  assert.equal(called, 0);
 });

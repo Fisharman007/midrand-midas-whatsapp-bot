@@ -98,3 +98,30 @@ test('buildBatteryLead accepts the brand written with the product code', () => {
     assert.equal(lead.priceQuoted, 3750);
   }
 });
+
+test('a dropped Postgres connection does not crash the bot (pool has an error handler)', () => {
+  const { createPgStore } = require('../batteryLeads');
+  const store = createPgStore('postgresql://u:p@127.0.0.1:1/x');
+  assert.doesNotThrow(() => store.pool.emit('error', new Error('connection terminated')));
+  store.pool.end();
+});
+
+test('saveWithRetry retries a failed save and gives up after the last delay', async () => {
+  const { saveWithRetry } = require('../batteryLeads');
+  let calls = 0;
+  const flaky = async () => { calls++; if (calls < 3) throw new Error('db down'); return { leadId: 'MB-1', updated: false }; };
+  assert.deepEqual(await saveWithRetry({}, { save: flaky, delays: [1, 1, 1] }), { leadId: 'MB-1', updated: false });
+  assert.equal(calls, 3);
+  calls = 0;
+  const dead = async () => { calls++; throw new Error('db down'); };
+  await assert.rejects(saveWithRetry({}, { save: dead, delays: [1, 1] }), /db down/);
+  assert.equal(calls, 3);
+});
+
+test('wasQuoted only allows sizes quoted to this customer (anything goes when nothing is remembered)', () => {
+  const { rememberQuote, wasQuoted } = require('../batteryLeads');
+  assert.equal(wasQuoted('whatsapp:+27000000555', '658AGM'), true);
+  rememberQuote('whatsapp:+27000000555', '646AGM');
+  assert.equal(wasQuoted('whatsapp:+27000000555', '646AGM'), true);
+  assert.equal(wasQuoted('whatsapp:+27000000555', '658AGM'), false);
+});

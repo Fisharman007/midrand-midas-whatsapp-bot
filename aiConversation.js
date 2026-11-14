@@ -3,7 +3,7 @@ const { getUniqueMakes, searchByMakeAndDescription, findBySKU, findBySpecs } = r
 const { searchKnowledge } = require('./knowledge');
 const { logTurn, logLead } = require('./logger');
 const { rememberSkus } = require('./priceGuard');
-const { buildBatteryLead, saveBatteryLead, rememberQuote, quotedOptionsText } = require('./batteryLeads');
+const { buildBatteryLead, saveWithRetry, rememberQuote, quotedOptionsText, wasQuoted } = require('./batteryLeads');
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
@@ -389,12 +389,16 @@ function executeTool(name, input, ctx) {
       from: ctx.from, customerName: ctx.profileName,
     });
     if (!lead) return { saved: false, error: 'That battery is not in the catalogue — re-check the option the customer picked.' };
+    if (!wasQuoted(ctx.from, lead.batterySku)) {
+      return { saved: false, error: `Size ${lead.batterySku} was not quoted to this customer — use the size and product code of the option they actually picked.` };
+    }
     const masked = { ...lead, phone: '****' + lead.phone.slice(-4) };
     console.log('[LEAD] battery', JSON.stringify(masked));
-    // Saved in the background — the customer's reply never waits on (or fails because of) the database
-    saveBatteryLead(lead)
+    // Saved in the background — the customer's reply never waits on (or fails because of) the database.
+    // Retried for ~12 minutes; if every attempt fails, the full number is logged once so staff can still call.
+    saveWithRetry(lead)
       .then(r => console.log('[BatteryLead] Saved', r.leadId, r.updated ? '(updated re-pick)' : ''))
-      .catch(err => console.error('[BatteryLead] Save failed:', err.message, JSON.stringify(masked)));
+      .catch(err => console.error('[LEAD-UNSAVED] battery — add to dashboard by hand:', err.message, JSON.stringify(lead)));
     return { saved: true, brand: lead.batteryBrand, productCode: lead.productCode, price: lead.priceQuoted };
   }
 
@@ -422,7 +426,8 @@ function detectUnstockedBrandMention(message) {
 const PICK_CONFIRMED = /excellent choice/i;
 
 async function ensureBatteryLead({ reply, toolsUsed, messages, system, ctx, createMessage }) {
-  if (!PICK_CONFIRMED.test(reply) || toolsUsed.includes('submit_battery_lead')) return false;
+  // Only after a battery quote — "excellent choice" in a parts or other reply must not invent a pick
+  if (!PICK_CONFIRMED.test(reply) || toolsUsed.includes('submit_battery_lead') || !quotedOptionsText(ctx.from)) return false;
   try {
     const response = await createMessage({
       model: MODEL,

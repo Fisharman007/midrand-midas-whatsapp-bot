@@ -27,6 +27,14 @@ function rememberQuote(from, sku) {
   lastQuoted.set(phone, { skus: [...fresh, sku], at: Date.now() });
 }
 
+// A lead must be for a size we actually quoted this customer. With nothing remembered (e.g. right
+// after a redeploy wiped memory) we can't check, so the catalogue check alone applies.
+function wasQuoted(from, sku) {
+  const entry = lastQuoted.get(phoneDigits(from));
+  if (!entry || Date.now() - entry.at > REPICK_WINDOW_MS) return true;
+  return entry.skus.some(s => s.toUpperCase() === String(sku).toUpperCase());
+}
+
 // "Option list" text for the AI: brand, product code and size of each battery last quoted.
 function quotedOptionsText(from) {
   const entry = lastQuoted.get(phoneDigits(from));
@@ -82,6 +90,22 @@ async function saveBatteryLead(lead, store = defaultStore(), now = Date.now()) {
   return { leadId, updated: false };
 }
 
+// A database blip must not lose the lead: retry after each delay (30s, 2min, 10min by default).
+const RETRY_DELAYS_MS = [30 * 1000, 2 * 60 * 1000, 10 * 60 * 1000];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function saveWithRetry(lead, { save = l => saveBatteryLead(l), delays = RETRY_DELAYS_MS } = {}) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await save(lead);
+    } catch (err) {
+      if (attempt >= delays.length) throw err;
+      console.warn(`[BatteryLead] Save failed (${err.message}), retrying in ${Math.round(delays[attempt] / 1000)}s`);
+      await sleep(delays[attempt]);
+    }
+  }
+}
+
 function createMemoryStore() {
   const rows = [];
   return {
@@ -106,7 +130,9 @@ function sslFor(connectionString, pgssl = process.env.PGSSL) {
 
 function createPgStore(connectionString) {
   const { Pool } = require('pg');
-  const pool = new Pool({ connectionString, ssl: sslFor(connectionString), max: 3 });
+  const pool = new Pool({ connectionString, ssl: sslFor(connectionString), max: 3, connectionTimeoutMillis: 5000 });
+  // Without this, an idle connection dropped by Postgres (restart, network blip) crashes the whole bot
+  pool.on('error', err => console.error('[BatteryLeads] Postgres connection error:', err.message));
 
   // Created on first use; a failed attempt (e.g. DB down at startup) is retried on the next save
   let ready = null;
@@ -133,6 +159,7 @@ function createPgStore(connectionString) {
   const values = r => [r.customerName, r.phone, r.vehicle, r.batterySku, r.batteryBrand, r.productCode, r.priceQuoted];
 
   return {
+    pool,
     async findRecentNew(phone, sinceMs) {
       await ensureTable();
       const { rows } = await pool.query(
@@ -165,4 +192,4 @@ function defaultStore() {
   return store;
 }
 
-module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, createMemoryStore, createPgStore, sslFor, rememberQuote, quotedOptionsText };
+module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, saveWithRetry, createMemoryStore, createPgStore, sslFor, rememberQuote, quotedOptionsText, wasQuoted };
