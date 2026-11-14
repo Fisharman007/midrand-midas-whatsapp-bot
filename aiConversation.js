@@ -3,7 +3,7 @@ const { getUniqueMakes, searchByMakeAndDescription, findBySKU, findBySpecs } = r
 const { searchKnowledge } = require('./knowledge');
 const { logTurn, logLead } = require('./logger');
 const { rememberSkus } = require('./priceGuard');
-const { buildBatteryLead, saveBatteryLead } = require('./batteryLeads');
+const { buildBatteryLead, saveBatteryLead, rememberQuote, quotedOptionsText } = require('./batteryLeads');
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
@@ -323,6 +323,7 @@ function executeTool(name, input, ctx) {
       };
     }
     rememberSkus(ctx?.from, [result.sku]);
+    rememberQuote(ctx?.from, result.sku);
     const hasSpecs = result._brands.some(b => b.ahrating != null || b.ccasae != null || b.ccaen != null);
     return {
       found: true,
@@ -414,6 +415,39 @@ function detectUnstockedBrandMention(message) {
   return UNSTOCKED_BRANDS.find(b => new RegExp(`\\b${b}\\b`).test(lower));
 }
 
+// Guaranteed battery lead — when a customer names the battery instead of replying with a number,
+// the model confirms the pick ("Excellent choice") but skips submit_battery_lead often enough that
+// staff would never hear about it (seen in testing). If the reply confirms a pick and no lead was
+// submitted this turn, make one extra call that must use the tool. Never shown to the customer.
+const PICK_CONFIRMED = /excellent choice/i;
+
+async function ensureBatteryLead({ reply, toolsUsed, messages, system, ctx, createMessage }) {
+  if (!PICK_CONFIRMED.test(reply) || toolsUsed.includes('submit_battery_lead')) return false;
+  try {
+    const response = await createMessage({
+      model: MODEL,
+      max_tokens: 300,
+      system,
+      tools: TOOLS,
+      tool_choice: { type: 'tool', name: 'submit_battery_lead' },
+      messages: [
+        ...messages,
+        { role: 'assistant', content: reply },
+        { role: 'user', content: `[System: The customer has just chosen a battery. Call submit_battery_lead for the option they chose.${quotedOptionsText(ctx.from) ? ` The batteries quoted to them were: ${quotedOptionsText(ctx.from)}. Use that option's product code and size exactly as written.` : ' Use its size SKU and productSKU from get_prices.'}]` },
+      ],
+    });
+    const call = response.content.find(b => b.type === 'tool_use' && b.name === 'submit_battery_lead');
+    if (!call) return false;
+    console.log('[Tool] submit_battery_lead (forced)', JSON.stringify(call.input));
+    const result = executeTool('submit_battery_lead', call.input, ctx);
+    if (!result.saved) console.warn('[BatteryLead] Forced lead not saved:', result.error);
+    return result.saved;
+  } catch (err) {
+    console.error('[BatteryLead] Forced lead call failed:', err.message);
+    return false;
+  }
+}
+
 async function runAIConversation(from, message, history, profileName) {
   const startMs = Date.now();
 
@@ -434,6 +468,11 @@ async function runAIConversation(from, message, history, profileName) {
     ...(profileName ? [{
       type: 'text',
       text: `The customer's name is ${profileName}. Use their first name at key moments — when greeting them, when you find a match ("Great news, ${profileName}!"), when presenting options, and when closing. Not every sentence — just the moments that feel natural and warm.`,
+    }] : []),
+    // Chat history keeps only text, so remind the model of the exact codes it quoted — used for submit_battery_lead
+    ...(quotedOptionsText(from) ? [{
+      type: 'text',
+      text: `Batteries already quoted to this customer (brand, product code, size): ${quotedOptionsText(from)}. If they pick one, call submit_battery_lead with that product code and size exactly as written here.`,
     }] : []),
   ];
 
@@ -506,6 +545,11 @@ async function runAIConversation(from, message, history, profileName) {
       ? "Thank you! We're now processing your quote. If you don't hear from us, give us a call: *011 312 4743*."
       : 'Sorry, something went wrong. Please try again or call us on *011 312 4743*.');
 
+  if (await ensureBatteryLead({
+    reply, toolsUsed, messages: workingMessages, system: systemPrompt,
+    ctx: { from, profileName, customerText }, createMessage: req => client.messages.create(req),
+  })) toolsUsed.push('submit_battery_lead');
+
   // Guaranteed brand acknowledgement — see note on detectUnstockedBrandMention above.
   // Only prepend if the model didn't already address it on its own.
   if (brandMention && !reply.toLowerCase().includes(brandMention)) {
@@ -544,4 +588,4 @@ async function runAIConversation(from, message, history, profileName) {
   return { reply, history: newHistory };
 }
 
-module.exports = { runAIConversation, executeTool };
+module.exports = { runAIConversation, executeTool, ensureBatteryLead };

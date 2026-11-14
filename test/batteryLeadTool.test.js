@@ -41,3 +41,41 @@ test('submit_battery_lead ignores a phone number or name smuggled into the tool 
   assert.match(lead, /\*\*\*\*0087/);
   assert.match(lead, /"customerName":"Sam"/);
 });
+
+const { ensureBatteryLead } = require('../aiConversation');
+
+test('ensureBatteryLead forces the lead when the reply confirms a pick but the AI skipped the tool', async () => {
+  const calls = [];
+  const createMessage = async req => {
+    calls.push(req);
+    return { content: [{ type: 'tool_use', name: 'submit_battery_lead', input: { sku: '660AGM', productCode: '660AGMS', vehicle: '2018 Audi SQ5' } }] };
+  };
+  const { result, lines } = await (async () => {
+    const lines = []; const orig = console.log; console.log = (...a) => lines.push(a.join(' '));
+    try { return { result: await ensureBatteryLead({ reply: '🎉 Excellent choice, Sam!', toolsUsed: ['get_prices'], messages: [{ role: 'user', content: 'Quote' }], system: [], ctx, createMessage }), lines }; }
+    finally { console.log = orig; }
+  })();
+  assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].tool_choice, { type: 'tool', name: 'submit_battery_lead' });
+  assert.equal(calls[0].messages.at(-1).role, 'user');
+  assert.equal(result, true);
+  assert.ok(lines.some(l => l.startsWith('[LEAD] battery') && l.includes('660AGMS')));
+});
+
+test('ensureBatteryLead does nothing when the tool already ran or the reply is not a pick', async () => {
+  let called = 0;
+  const createMessage = async () => { called++; return { content: [] }; };
+  await ensureBatteryLead({ reply: '🎉 Excellent choice!', toolsUsed: ['submit_battery_lead'], messages: [], system: [], ctx, createMessage });
+  await ensureBatteryLead({ reply: 'Which year is your Polo?', toolsUsed: [], messages: [], system: [], ctx, createMessage });
+  assert.equal(called, 0);
+});
+
+test('the forced lead call is given the exact options last quoted to this customer', async () => {
+  const quoteCtx = { from: 'whatsapp:+27000000777', profileName: 'Q' };
+  executeTool('get_prices', { sku: '646AGM' }, quoteCtx);
+  let req;
+  await ensureBatteryLead({ reply: 'Excellent choice!', toolsUsed: [], messages: [{ role: 'user', content: '2' }], system: [],
+    ctx: quoteCtx, createMessage: async r => { req = r; return { content: [] }; } });
+  const nudge = req.messages.at(-1).content;
+  for (const code of ['646-D52', '646AGMS', 'size 646AGM']) assert.ok(nudge.includes(code), `nudge missing ${code}`);
+});

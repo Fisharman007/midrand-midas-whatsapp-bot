@@ -26,7 +26,7 @@ test('buildBatteryLead takes brand and price from the catalogue, matching loose 
 
 test('buildBatteryLead returns null for a code that is not under that size, or an unknown size', () => {
   assert.equal(pick('646-D24'), null);
-  assert.equal(pick('658-G14', '999XX'), null);
+  assert.equal(pick('NOPE-1', '999XX'), null);
 });
 
 test('a re-pick within 2 hours updates the same New lead', async () => {
@@ -78,4 +78,23 @@ test('sslFor: no TLS on Railway\'s private network, encrypted (unverified) on th
   assert.equal(sslFor('postgresql://u:p@postgres.railway.internal:5432/railway'), false);
   assert.deepEqual(sslFor('postgresql://u:p@shuttle.proxy.rlwy.net:12345/railway'), { rejectUnauthorized: false });
   assert.equal(sslFor('postgresql://u:p@localhost:5432/x', 'disable'), false);
+});
+
+test('buildBatteryLead recovers when the AI passes the wrong size but a unique product code', () => {
+  const lead = pick('660AGMS', '660AGMS');
+  assert.equal(lead.batterySku, '660AGM');
+  assert.equal(lead.batteryBrand, 'SABAT');
+  assert.equal(lead.priceQuoted, 5350);
+});
+
+test('buildBatteryLead refuses a wrong size when the product code exists under more than one size', () => {
+  assert.equal(pick('650SR', '999XX'), null);
+});
+
+test('buildBatteryLead accepts the brand written with the product code', () => {
+  for (const code of ['WILLARD 646AGM', '646AGM Willard']) {
+    const lead = pick(code, '646AGM');
+    assert.equal(lead?.batteryBrand, 'WILLARD', code);
+    assert.equal(lead.priceQuoted, 3750);
+  }
 });

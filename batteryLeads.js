@@ -5,23 +5,61 @@
 // Uses Postgres when DATABASE_URL is set, otherwise an in-memory store (local dev / tests).
 
 const crypto = require('crypto');
-const { getPricesForSKU } = require('./catalogue');
+const { getPricesForSKU, getAvailableSKUs } = require('./catalogue');
 
 const REPICK_WINDOW_MS = 2 * 60 * 60 * 1000; // a re-pick within 2h updates the existing New lead
 const SAST_OFFSET_MS   = 2 * 60 * 60 * 1000;
 
 const phoneDigits = from => String(from || '').replace(/\D/g, '');
 const codeKey     = code => String(code || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+// "646AGM", "Willard 646AGM" and "646AGM willard" all name the same option
+const sameOption  = (b, key) => [codeKey(b.psku), codeKey(b.brand) + codeKey(b.psku), codeKey(b.psku) + codeKey(b.brand)].includes(key);
+
+// The battery sizes last priced for each customer (chat history keeps only text, not tool results),
+// so a lead can be matched to exactly what was quoted. Kept for the same 2h as a re-pick.
+const lastQuoted = new Map(); // phone digits -> { skus: [], at }
+
+function rememberQuote(from, sku) {
+  const phone = phoneDigits(from);
+  if (!phone || !sku) return;
+  const prev = lastQuoted.get(phone);
+  const fresh = prev && Date.now() - prev.at < REPICK_WINDOW_MS ? prev.skus.filter(s => s !== sku) : [];
+  lastQuoted.set(phone, { skus: [...fresh, sku], at: Date.now() });
+}
+
+// "Option list" text for the AI: brand, product code and size of each battery last quoted.
+function quotedOptionsText(from) {
+  const entry = lastQuoted.get(phoneDigits(from));
+  if (!entry || Date.now() - entry.at > REPICK_WINDOW_MS) return '';
+  return entry.skus.flatMap(sku => getPricesForSKU(sku).map(b => `${b.brand} ${b.psku} (size ${sku})`)).join('; ');
+}
+
+// The option under the given size. If the "size" isn't a real size at all (the AI sometimes passes
+// the product code there), use the one size whose list has that product code. A real size with
+// another size's product code is refused — the lead must match what the customer was quoted.
+function findOption(sku, productCode) {
+  const key = codeKey(productCode);
+  const options = getPricesForSKU(sku);
+  if (options.length) {
+    const direct = options.find(b => sameOption(b, key));
+    return direct ? { sku, option: direct } : null;
+  }
+  const matches = getAvailableSKUs()
+    .map(s => ({ sku: s, option: getPricesForSKU(s).find(b => sameOption(b, key)) }))
+    .filter(m => m.option);
+  return matches.length === 1 ? matches[0] : null;
+}
 
 function buildBatteryLead({ from, customerName, vehicle, sku, productCode }) {
-  const option = getPricesForSKU(sku).find(b => codeKey(b.psku) === codeKey(productCode));
-  const price  = Math.round(parseFloat(option?.price));
-  if (!option || isNaN(price)) return null;
+  const found = findOption(sku, productCode);
+  const price = Math.round(parseFloat(found?.option.price));
+  if (!found || isNaN(price)) return null;
+  const { option } = found;
   return {
     phone:        phoneDigits(from),
     customerName: customerName || '',
     vehicle:      vehicle || '',
-    batterySku:   String(sku).trim().toUpperCase(),
+    batterySku:   String(found.sku).trim().toUpperCase(),
     batteryBrand: option.brand,
     productCode:  option.psku,
     priceQuoted:  price,
@@ -127,4 +165,4 @@ function defaultStore() {
   return store;
 }
 
-module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, createMemoryStore, createPgStore, sslFor };
+module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, createMemoryStore, createPgStore, sslFor, rememberQuote, quotedOptionsText };
