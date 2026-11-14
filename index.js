@@ -45,8 +45,8 @@ function aiGreeting(name) {
 function batteryQuotePrompt() {
   return (
     `🔋 Great, let's find your battery!\n\n` +
-    `What car do you need a battery for?\n\n` +
-    `_You can type your vehicle details or send a photo of your licence disc / old battery and I'll scan it for you 📸_`
+    `Please send me your battery *size* (e.g. 652, 646AGM) or a 📸 *picture* of your old battery.\n\n` +
+    `_Don't know it? No problem — just tell me your car's make, model and year and we'll look up what fits 🚗_`
   );
 }
 
@@ -123,8 +123,16 @@ async function handleAIMessage(from, message, profileName) {
     // Only match short, unambiguous menu picks here — a full sentence like
     // "I need a battery for my Polo" should fall through to the AI below instead.
     if (msg === '1' || /^batter(y|ies)( quote)?$/i.test(msg)) {
-      updateSession(from, { state: 'AI_CHAT', data: { ...session.data } });
-      return batteryQuotePrompt();
+      // Seed the history so the AI knows what the customer was just asked
+      const assistantReply = batteryQuotePrompt();
+      updateSession(from, {
+        state: 'AI_CHAT',
+        data: { ...session.data, aiHistory: [
+          { role: 'user', content: `[System: Customer selected "Battery Quote" from the menu.]` },
+          { role: 'assistant', content: assistantReply },
+        ] },
+      });
+      return assistantReply;
     }
     if (msg === '2' || /^parts?( quote)?$/i.test(msg)) {
       const seedMsg = `[System: Customer selected "Parts Quote". Run the Parts Quote conversation flow described in your instructions — one question at a time, numbered options where there's a small set of answers.]`;
