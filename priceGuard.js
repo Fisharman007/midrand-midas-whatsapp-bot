@@ -15,11 +15,36 @@ const RAND_RE = /\bR\s?(\d{1,3}(?:[ , ]\d{3})+|\d+)(?:\.\d{2})?(?![\w])/g;
 
 const recentSkus = new Map(); // from -> { skus: Set, at }
 
+// Supplier product codes (PSKUs) -> the battery size they belong to, e.g. "646-D52" -> "646agm".
+// Without this, "VARTA (646-D52)" reads as plain SKU 646 and its real AGM price gets blocked.
+function pskuPatterns() {
+  const patterns = [];
+  for (const sku of getAvailableSKUs()) {
+    for (const b of getPricesForSKU(sku)) {
+      const parts = (b.psku || '').toLowerCase().match(/[a-z0-9]+/g);
+      if (!parts) continue;
+      // allow "646-D52", "646 D52" or "646D52"
+      patterns.push({ re: new RegExp(`(?<![a-z0-9])${parts.join('[\\s-]?')}(?![a-z0-9])`, 'gi'), sku: sku.toLowerCase() });
+    }
+  }
+  // longest codes first so "646AGMS" is matched before "646AGM"
+  return patterns.sort((a, b) => b.re.source.length - a.re.source.length);
+}
+
 function skusIn(text) {
   const priced = new Set(getAvailableSKUs().map(s => s.toLowerCase()));
+  const found = new Set();
+
+  // Pull out supplier codes first, so their leading digits don't also count as the plain size
+  let rest = text;
+  for (const { re, sku } of pskuPatterns()) {
+    rest = rest.replace(re, () => { found.add(sku); return ' '; });
+  }
+
   // "646 AGM" -> "646agm" so it matches the AGM SKU rather than the plain 646
-  const tokens = text.replace(/(\d{3})\s+agm\b/gi, '$1agm').toLowerCase().match(/[a-z0-9]+/g) || [];
-  return new Set(tokens.filter(t => priced.has(t)));
+  const tokens = rest.replace(/(\d{3})\s+agm\b/gi, '$1agm').toLowerCase().match(/[a-z0-9]+/g) || [];
+  tokens.filter(t => priced.has(t)).forEach(t => found.add(t));
+  return found;
 }
 
 function rememberSkus(from, skus) {

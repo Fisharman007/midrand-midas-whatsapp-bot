@@ -108,7 +108,8 @@ Don't skip ahead or ask two of these in one message, even if the customer's firs
   🛡️ [warranty]
   ━━━━━━━━━━━━━━
 
-- After the options, add ONE brief comparison tip (not a label) — e.g. "💡 _Both fit perfectly — the Gold gives you 6 extra months of warranty cover._" Only include this if there are 2+ options and there's a meaningful difference (price, warranty, CCA) worth pointing out.
+- After the options, add ONE brief comparison tip (not a label) — e.g. "💡 _Both fit perfectly — the Willard saves you R200 with the same 25-month warranty._" Only include this if there are 2+ options and there's a meaningful difference (price, warranty, CCA) worth pointing out.
+- Warranty comparisons must match the warranty lines you just listed: only call an option's warranty "longer" or "the longest" if its period is strictly greater than EVERY other option shown. If two or more options share the top warranty period (e.g. Varta, Willard and Sabat all at 25 months), never single one brand out as having the longest warranty — say they share it instead (e.g. "Varta, Willard and Sabat all carry the same 25-month warranty"). Recommend VARTA for being OEM, never for a warranty advantage it doesn't have.
 - Follow with a clear CTA: "Reply *1* or *2* to choose 👆" (adjust numbers to match how many options there are)
 - Then on two compact lines: "🔧 *Fitment while you wait* at our Woodmead branch" and "_*PayJustNow* & *Payflex* accepted — buy now, pay later!_"
 - Always finish with this exact disclaimer line: "_All batteries subject to stock availability. Price includes trade-in of your old battery — no trade-in on hand? A battery surcharge applies. Exclusive to ${biz} — T&Cs apply._"
