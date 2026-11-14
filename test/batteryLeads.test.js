@@ -72,3 +72,10 @@ test('a failed save does not leave the store stuck — the next save succeeds', 
   assert.equal(ok.updated, false);
   assert.equal(store.rows.length, 1);
 });
+
+test('sslFor: no TLS on Railway\'s private network, encrypted (unverified) on the public proxy, off when PGSSL=disable', () => {
+  const { sslFor } = require('../batteryLeads');
+  assert.equal(sslFor('postgresql://u:p@postgres.railway.internal:5432/railway'), false);
+  assert.deepEqual(sslFor('postgresql://u:p@shuttle.proxy.rlwy.net:12345/railway'), { rejectUnauthorized: false });
+  assert.equal(sslFor('postgresql://u:p@localhost:5432/x', 'disable'), false);
+});

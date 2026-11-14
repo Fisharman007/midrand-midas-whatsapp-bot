@@ -56,14 +56,19 @@ function createMemoryStore() {
   };
 }
 
+// In production the bot reaches Postgres over Railway's private network (*.railway.internal),
+// which never leaves Railway — no TLS needed there. The public proxy (local testing only)
+// presents a certificate Node can't verify, so it is encrypted but unverified.
+function sslFor(connectionString, pgssl = process.env.PGSSL) {
+  if (pgssl === 'disable') return false;
+  let host = '';
+  try { host = new URL(connectionString).hostname; } catch { /* fall through */ }
+  return host.endsWith('.railway.internal') ? false : { rejectUnauthorized: false };
+}
+
 function createPgStore(connectionString) {
   const { Pool } = require('pg');
-  const pool = new Pool({
-    connectionString,
-    // Railway's Postgres proxy presents a certificate Node can't verify; traffic is still encrypted
-    ssl: process.env.PGSSL === 'disable' ? false : { rejectUnauthorized: false },
-    max: 3,
-  });
+  const pool = new Pool({ connectionString, ssl: sslFor(connectionString), max: 3 });
 
   // Created on first use; a failed attempt (e.g. DB down at startup) is retried on the next save
   let ready = null;
@@ -122,4 +127,4 @@ function defaultStore() {
   return store;
 }
 
-module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, createMemoryStore, createPgStore };
+module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, createMemoryStore, createPgStore, sslFor };

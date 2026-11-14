@@ -3,6 +3,7 @@ const { getUniqueMakes, searchByMakeAndDescription, findBySKU, findBySpecs } = r
 const { searchKnowledge } = require('./knowledge');
 const { logTurn, logLead } = require('./logger');
 const { rememberSkus } = require('./priceGuard');
+const { buildBatteryLead, saveBatteryLead } = require('./batteryLeads');
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
@@ -118,8 +119,10 @@ Don't skip ahead or ask two of these in one message, even if the customer's firs
 - Do NOT use markdown tables
 
 *After a successful quote:*
-- When the customer picks a battery (replies 1 or 2), confirm enthusiastically and give clear next steps:
+- When the customer picks a battery (replies with an option number or names the battery), FIRST call submit_battery_lead in that same turn with the chosen option's size SKU and productSKU — that is the only way our team learns they want it. If it returns saved: false, re-check which option they meant (ask if unclear) rather than confirming. Then confirm enthusiastically and give clear next steps:
   "🎉 Excellent choice, [Name]!
+
+  Our team will give you a call to confirm stock and book your fitment.
 
   Here's how to get it sorted:
   🚗 *Drive in* — 35 Richard Drive, Halfway House, Midrand (no appointment needed — we'll fit it on the spot!)
@@ -224,6 +227,19 @@ const TOOLS = [
         parts:           { type: 'string', description: 'The specific part(s) the customer needs' },
       },
       required: ['fulfilment', 'vehicle', 'parts'],
+    },
+  },
+  {
+    name: 'submit_battery_lead',
+    description: 'Saves the battery the customer chose so our team can phone them. Call this exactly once, in the same turn the customer picks one of the quoted options (by number or by name, e.g. "1", "the Willard", "I\'ll take the Varta") — never before they choose. Use that option\'s size SKU and product code exactly as get_prices returned them.',
+    input_schema: {
+      type: 'object',
+      properties: {
+        sku:         { type: 'string', description: 'Battery size SKU from get_prices, e.g. "658AGM"' },
+        productCode: { type: 'string', description: 'The chosen option\'s productSKU from get_prices, e.g. "658-G14"' },
+        vehicle:     { type: 'string', description: 'Customer\'s vehicle, e.g. "2016 Audi A4 2.0 TFSI"' },
+      },
+      required: ['sku', 'productCode', 'vehicle'],
     },
   },
 ];
@@ -362,6 +378,18 @@ function executeTool(name, input, ctx) {
     ].join('\n');
     logLead({ from: ctx.from, profileName: ctx.profileName, type: 'parts', request });
     return { success: true };
+  }
+
+  if (name === 'submit_battery_lead') {
+    const lead = buildBatteryLead({ from: ctx.from, customerName: ctx.profileName, ...input });
+    if (!lead) return { saved: false, error: 'That battery is not in the catalogue — re-check the option the customer picked.' };
+    const masked = { ...lead, phone: '****' + lead.phone.slice(-4) };
+    console.log('[LEAD] battery', JSON.stringify(masked));
+    // Saved in the background — the customer's reply never waits on (or fails because of) the database
+    saveBatteryLead(lead)
+      .then(r => console.log('[BatteryLead] Saved', r.leadId, r.updated ? '(updated re-pick)' : ''))
+      .catch(err => console.error('[BatteryLead] Save failed:', err.message, JSON.stringify(masked)));
+    return { saved: true, brand: lead.batteryBrand, productCode: lead.productCode, price: lead.priceQuoted };
   }
 
   return { error: `Unknown tool: ${name}` };
@@ -511,4 +539,4 @@ async function runAIConversation(from, message, history, profileName) {
   return { reply, history: newHistory };
 }
 
-module.exports = { runAIConversation };
+module.exports = { runAIConversation, executeTool };
