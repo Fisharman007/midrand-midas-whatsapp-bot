@@ -33,3 +33,11 @@ test('submit_battery_lead refuses a battery that is not in the catalogue', () =>
   assert.match(result.error, /not in the catalogue/);
   assert.ok(!lines.some(l => l.startsWith('[LEAD] battery')));
 });
+
+test('submit_battery_lead ignores a phone number or name smuggled into the tool input', () => {
+  const { lines } = captureLogs(() => executeTool('submit_battery_lead',
+    { sku: '658AGM', productCode: '658-G14', vehicle: 'x', from: 'whatsapp:+27999999999', customerName: 'Mallory' }, ctx));
+  const lead = lines.find(l => l.startsWith('[LEAD] battery'));
+  assert.match(lead, /\*\*\*\*0087/);
+  assert.match(lead, /"customerName":"Sam"/);
+});

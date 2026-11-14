@@ -240,6 +240,7 @@ const TOOLS = [
         vehicle:     { type: 'string', description: 'Customer\'s vehicle, e.g. "2016 Audi A4 2.0 TFSI"' },
       },
       required: ['sku', 'productCode', 'vehicle'],
+      additionalProperties: false,
     },
   },
 ];
@@ -381,7 +382,11 @@ function executeTool(name, input, ctx) {
   }
 
   if (name === 'submit_battery_lead') {
-    const lead = buildBatteryLead({ from: ctx.from, customerName: ctx.profileName, ...input });
+    // Only the battery fields come from the AI — who the customer is comes from the webhook
+    const lead = buildBatteryLead({
+      sku: input.sku, productCode: input.productCode, vehicle: input.vehicle,
+      from: ctx.from, customerName: ctx.profileName,
+    });
     if (!lead) return { saved: false, error: 'That battery is not in the catalogue — re-check the option the customer picked.' };
     const masked = { ...lead, phone: '****' + lead.phone.slice(-4) };
     console.log('[LEAD] battery', JSON.stringify(masked));
