@@ -125,3 +125,21 @@ test('wasQuoted only allows sizes quoted to this customer (anything goes when no
   assert.equal(wasQuoted('whatsapp:+27000000555', '646AGM'), true);
   assert.equal(wasQuoted('whatsapp:+27000000555', '658AGM'), false);
 });
+
+test('recordUnsavedLead sends the full lead to the staff sheet and keeps the number out of the logs', () => {
+  const { recordUnsavedLead } = require('../batteryLeads');
+  const sent = [];
+  const lines = [];
+  const orig = console.error;
+  console.error = (...a) => lines.push(a.join(' '));
+  try {
+    recordUnsavedLead(pick('658-G14'), new Error('db down'), { logLeadFn: e => sent.push(e) });
+  } finally { console.error = orig; }
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].from, '27631890087');
+  assert.match(sent[0].type, /battery/i);
+  assert.match(sent[0].request, /VARTA 658-G14/);
+  assert.match(sent[0].request, /R5,695/);
+  assert.ok(lines.length > 0);
+  assert.ok(!lines.some(l => l.includes('27631890087')), 'full number must not be logged');
+});

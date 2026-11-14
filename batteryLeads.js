@@ -106,6 +106,19 @@ async function saveWithRetry(lead, { save = l => saveBatteryLead(l), delays = RE
   }
 }
 
+// Every save attempt failed: hand the lead to the staff Google Sheet (access-controlled, already
+// holds full numbers for parts leads) so someone can still call. Logs only ever get the masked number.
+function recordUnsavedLead(lead, err, { logLeadFn = require('./logger').logLead } = {}) {
+  const masked = { ...lead, phone: '****' + String(lead.phone).slice(-4) };
+  console.error('[LEAD-UNSAVED] battery — sent to the leads sheet instead:', err.message, JSON.stringify(masked));
+  logLeadFn({
+    from:        lead.phone,
+    profileName: lead.customerName,
+    type:        'battery (not on dashboard — DB down)',
+    request:     `Picked ${lead.batteryBrand} ${lead.productCode} (size ${lead.batterySku}) at R${Number(lead.priceQuoted).toLocaleString('en-US')} for ${lead.vehicle || 'vehicle not given'}`,
+  });
+}
+
 function createMemoryStore() {
   const rows = [];
   return {
@@ -192,4 +205,4 @@ function defaultStore() {
   return store;
 }
 
-module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, saveWithRetry, createMemoryStore, createPgStore, sslFor, rememberQuote, quotedOptionsText, wasQuoted };
+module.exports = { phoneDigits, buildBatteryLead, saveBatteryLead, saveWithRetry, recordUnsavedLead, createMemoryStore, createPgStore, sslFor, rememberQuote, quotedOptionsText, wasQuoted };

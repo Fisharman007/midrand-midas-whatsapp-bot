@@ -3,7 +3,7 @@ const { getUniqueMakes, searchByMakeAndDescription, findBySKU, findBySpecs } = r
 const { searchKnowledge } = require('./knowledge');
 const { logTurn, logLead } = require('./logger');
 const { rememberSkus } = require('./priceGuard');
-const { buildBatteryLead, saveWithRetry, rememberQuote, quotedOptionsText, wasQuoted } = require('./batteryLeads');
+const { buildBatteryLead, saveWithRetry, recordUnsavedLead, rememberQuote, quotedOptionsText, wasQuoted } = require('./batteryLeads');
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
@@ -395,10 +395,10 @@ function executeTool(name, input, ctx) {
     const masked = { ...lead, phone: '****' + lead.phone.slice(-4) };
     console.log('[LEAD] battery', JSON.stringify(masked));
     // Saved in the background — the customer's reply never waits on (or fails because of) the database.
-    // Retried for ~12 minutes; if every attempt fails, the full number is logged once so staff can still call.
+    // Retried for ~12 minutes; if every attempt fails, the lead goes to the staff leads sheet instead.
     saveWithRetry(lead)
       .then(r => console.log('[BatteryLead] Saved', r.leadId, r.updated ? '(updated re-pick)' : ''))
-      .catch(err => console.error('[LEAD-UNSAVED] battery — add to dashboard by hand:', err.message, JSON.stringify(lead)));
+      .catch(err => recordUnsavedLead(lead, err));
     return { saved: true, brand: lead.batteryBrand, productCode: lead.productCode, price: lead.priceQuoted };
   }
 
