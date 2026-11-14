@@ -20,7 +20,7 @@ const PORT = process.env.PORT || 3000;
 const RESET_TRIGGERS = new Set(['menu', 'hi', 'hello', 'hey', 'start', 'hola', 'howzit']);
 
 function contactCard() {
-  const biz = process.env.BUSINESS_NAME || 'First Battery Woodmead';
+  const biz = process.env.BUSINESS_NAME || 'Midrand Midas';
   return (
     `Need help? Our team is ready for you! 😊\n\n` +
     `📞 *Call us:* 011 312 4743\n` +
@@ -47,6 +47,21 @@ function batteryQuotePrompt() {
     `🔋 Great, let's find your battery!\n\n` +
     `What car do you need a battery for?\n\n` +
     `_You can type your vehicle details or send a photo of your licence disc / old battery and I'll scan it for you 📸_`
+  );
+}
+
+// Reply for messages the bot can't read: voice notes, videos, location pins, empty messages
+function unsupportedMediaReply(kind) {
+  const what = {
+    'voice note': `I can't listen to voice notes yet 🎧`,
+    video:        `I can't watch videos yet 🎬`,
+    location:     `Thanks for the location! 📍 We're at *35 Richard Drive, Halfway House, Midrand*.`,
+  }[kind] || `I didn't catch that 🤔`;
+  return (
+    `${what}\n\n` +
+    `Please *type* your vehicle's make, model and year _(e.g. Toyota Hilux 2019)_ — ` +
+    `or send a *photo* of your licence disc or old battery label 📸\n\n` +
+    `_Or call us on *011 312 4743*._`
   );
 }
 
@@ -156,10 +171,17 @@ app.post('/webhook', async (req, res) => {
       return res.send(twiml.toString());
     }
     const mediaUrl    = parseInt(req.body.NumMedia, 10) > 0 ? req.body.MediaUrl0 : null;
+    const mediaType   = (req.body.MediaContentType0 || '').toLowerCase();
 
     let responseText;
 
-    if (mediaUrl) {
+    if (mediaUrl && /^(audio|video)\//.test(mediaType)) {
+      // Voice notes / videos used to go to the licence-disc reader and fail
+      responseText = unsupportedMediaReply(mediaType.startsWith('audio') ? 'voice note' : 'video');
+    } else if (!mediaUrl && !incomingMsg) {
+      // Location pins, reactions etc. arrive with no text — the AI rejects empty messages
+      responseText = unsupportedMediaReply(req.body.Latitude ? 'location' : 'message');
+    } else if (mediaUrl) {
       responseText = await handleLicenceDisc(from, incomingMsg, getSession(from), mediaUrl, null);
     } else {
       responseText = await handleAIMessage(from, incomingMsg, profileName);
@@ -219,8 +241,12 @@ app.post('/wa-webhook', async (req, res) => {
     if (message.type === 'image') {
       const mediaId = message.image?.id;
       responseText  = await handleLicenceDisc(from, '', getSession(from), null, mediaId);
-    } else if (message.type === 'text') {
-      responseText = await handleAIMessage(from, message.text?.body || '', profileName);
+    } else if (message.type === 'text' && (message.text?.body || '').trim()) {
+      responseText = await handleAIMessage(from, message.text.body, profileName);
+    } else if (message.type === 'audio' || message.type === 'video') {
+      responseText = unsupportedMediaReply(message.type === 'audio' ? 'voice note' : 'video');
+    } else if (message.type !== 'reaction') {
+      responseText = unsupportedMediaReply(message.type === 'location' ? 'location' : 'message');
     }
     responseText = guardPrices(from, responseText);
 

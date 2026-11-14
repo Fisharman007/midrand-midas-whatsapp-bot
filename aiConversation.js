@@ -15,7 +15,7 @@ const client = new Anthropic({
 });
 
 function buildSystemPrompt() {
-  const biz = process.env.BUSINESS_NAME || 'First Battery Woodmead';
+  const biz = process.env.BUSINESS_NAME || 'Midrand Midas';
   return `You are an upbeat, enthusiastic WhatsApp sales assistant for *${biz}*, a battery retailer in Johannesburg, South Africa. You genuinely love helping customers and it shows in every message.
 
 Your job is to help customers find the right battery for their vehicle and give them pricing from the catalogue.
@@ -111,7 +111,7 @@ Don't skip ahead or ask two of these in one message, even if the customer's firs
 - After the options, add ONE brief comparison tip (not a label) — e.g. "💡 _Both fit perfectly — the Willard costs less with the same 25-month warranty._" Never state a savings or price-difference amount (e.g. "saves you R500", "R550 cheaper", "R300 less than") — only the listed prices themselves may appear as rand amounts. This applies everywhere, even if the customer asks "how much cheaper is it?" or "what's the difference?": answer by restating each option's own price (e.g. "Sabat is R4,650, Willard is R5,200 and Varta is R5,695") and let them compare. Only include this if there are 2+ options and there's a meaningful difference (price, warranty, CCA) worth pointing out.
 - Warranty comparisons must match the warranty lines you just listed: only call an option's warranty "longer" or "the longest" if its period is strictly greater than EVERY other option shown. If two or more options share the top warranty period (e.g. Varta, Willard and Sabat all at 25 months), never single one brand out as having the longest warranty — say they share it instead (e.g. "Varta, Willard and Sabat all carry the same 25-month warranty"). Recommend VARTA for being OEM, never for a warranty advantage it doesn't have.
 - Follow with a clear CTA: "Reply *1* or *2* to choose 👆" (adjust numbers to match how many options there are)
-- Then on two compact lines: "🔧 *Fitment while you wait* at our Woodmead branch" and "_*PayJustNow* & *Payflex* accepted — buy now, pay later!_"
+- Then on two compact lines: "🔧 *Fitment while you wait* at our Midrand Midas branch" and "_*PayJustNow* & *Payflex* accepted — buy now, pay later!_"
 - Always finish with this exact disclaimer line: "_All batteries subject to stock availability. Price includes trade-in of your old battery — no trade-in on hand? A battery surcharge applies. Exclusive to ${biz} — T&Cs apply._"
 - If AGM is required, present it as the only correct option and explain why briefly — keep it informative, not alarming
 - If only one option exists, skip the numbered format and CTA — just present it cleanly and ask if they'd like to go ahead
@@ -383,6 +383,16 @@ function detectUnstockedBrandMention(message) {
 
 async function runAIConversation(from, message, history, profileName) {
   const startMs = Date.now();
+
+  // The API rejects empty user turns (66 "something went wrong" replies in one week) —
+  // never send one, and drop any that slipped into stored history
+  history = history.filter(m => typeof m.content !== 'string' || m.content.trim());
+  if (!(message || '').trim()) {
+    return {
+      reply: `I didn't catch that 🤔 Please *type* your vehicle's make, model and year _(e.g. Toyota Hilux 2019)_, or send a photo of your licence disc 📸`,
+      history,
+    };
+  }
 
   // Build system prompt once and cache it — avoids reprocessing on every tool round
   // Customer name is a small non-cached addition so the large prompt stays cached
