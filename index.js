@@ -65,6 +65,14 @@ function unsupportedMediaReply(kind) {
   );
 }
 
+// Every reply that shows a price ends with the shop's number for stock checks. International
+// format so WhatsApp turns it into a tap-to-call link on every phone.
+const STOCK_LINE = '📞 *Check stock availability:* +27 11 312 4743';
+function addStockLine(text) {
+  if (!text || !/\bR\s?\d/.test(text) || text.includes('+27 11 312 4743')) return text;
+  return `${text.trimEnd()}\n\n${STOCK_LINE}`;
+}
+
 
 // Load catalogue into memory before the server accepts any requests
 console.log('Loading catalogue...');
@@ -186,7 +194,7 @@ app.post('/webhook', async (req, res) => {
     } else {
       responseText = await handleAIMessage(from, incomingMsg, profileName);
     }
-    responseText = guardPrices(from, responseText);
+    responseText = addStockLine(guardPrices(from, responseText));
 
     const twiml = new MessagingResponse();
     if (responseText) twiml.message(responseText);
@@ -248,7 +256,7 @@ app.post('/wa-webhook', async (req, res) => {
     } else if (message.type !== 'reaction') {
       responseText = unsupportedMediaReply(message.type === 'location' ? 'location' : 'message');
     }
-    responseText = guardPrices(from, responseText);
+    responseText = addStockLine(guardPrices(from, responseText));
 
     if (responseText && phoneNumberId) {
       await sendWhatsAppReply(phoneNumberId, from, responseText);
