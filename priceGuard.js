@@ -35,8 +35,9 @@ function skusIn(text) {
   const priced = new Set(getAvailableSKUs().map(s => s.toLowerCase()));
   const found = new Set();
 
+  // Ignore rand amounts — "R4,650" must not read as SKU 650
+  let rest = text.replace(RAND_RE, ' ');
   // Pull out supplier codes first, so their leading digits don't also count as the plain size
-  let rest = text;
   for (const { re, sku } of pskuPatterns()) {
     rest = rest.replace(re, () => { found.add(sku); return ' '; });
   }
@@ -70,8 +71,38 @@ function catalogueRands(skus) {
   return rands;
 }
 
+// "saves you R400", "R500 cheaper", "R300 less than" — the bot must only quote listed prices,
+// never savings or price differences. Matches the word on either side of the amount.
+const SAVINGS_WORDS = '(?:sav(?:e|es|ing|ings)|cheaper|less|difference|extra|more|off|discount)';
+const SAVINGS_RE = new RegExp(
+  `${SAVINGS_WORDS}[^.!?\\n]{0,25}\\bR\\s?\\d|\\bR\\s?[\\d ,.]+\\s*(?:\\w+\\s+){0,2}${SAVINGS_WORDS}\\b`, 'i');
+
+// Drop any sentence that states a savings / difference amount; drop the whole line if nothing is left
+function stripSavings(from, text) {
+  return text.split('\n').map(line => {
+    if (!SAVINGS_RE.test(line)) return line;
+    console.warn('[PriceGuard] Removed savings amount', JSON.stringify({
+      from: from ? '****' + String(from).slice(-4) : '', line,
+    }));
+    // 💡 comparison tips are optional and italic-wrapped — drop the whole tip rather than leave half
+    if (/^\s*💡/.test(line)) return null;
+    // Drop only the offending clause, so "Sabat is the cheapest at R4,650 — that's R550 less…"
+    // keeps "Sabat is the cheapest at R4,650."
+    const kept = line.split(/(?<=[.!?])\s+/).map(sentence => {
+      if (!SAVINGS_RE.test(sentence)) return sentence;
+      const clauses = sentence.split(/\s+—\s+|;\s+|,\s+/);
+      const good = [];
+      for (const c of clauses) { if (SAVINGS_RE.test(c)) break; good.push(c); }
+      if (!good.length) return '';
+      return good.join(', ').replace(/[\s,]+$/, '').replace(/([^.!?])$/, '$1.');
+    }).filter(Boolean).join(' ').trim();
+    return /[a-z0-9]/i.test(kept) ? kept : null;
+  }).filter(l => l !== null).join('\n');
+}
+
 function guardPrices(from, text) {
   if (!text) return text;
+  text = stripSavings(from, text);
 
   const messageSkus = skusIn(text);
   const fallbackSkus = messageSkus.size ? messageSkus : rememberedSkus(from);
