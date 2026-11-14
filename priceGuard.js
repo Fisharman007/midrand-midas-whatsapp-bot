@@ -77,22 +77,21 @@ const SAVINGS_WORDS = '(?:sav(?:e|es|ing|ings)|cheaper|less|difference|extra|mor
 const SAVINGS_RE = new RegExp(
   `${SAVINGS_WORDS}[^.!?\\n]{0,25}\\bR\\s?\\d|\\bR\\s?[\\d ,.]+\\s*(?:\\w+\\s+){0,2}${SAVINGS_WORDS}\\b`, 'i');
 
-// Drop any sentence that states a savings / difference amount; drop the whole line if nothing is left
-function stripSavings(from, text) {
+const mask = from => (from ? '****' + String(from).slice(-4) : '');
+
+// Remove the parts of a message that fail `isBad`, line by line. A 💡 tip is dropped whole
+// (it's optional and italic-wrapped); otherwise only the offending clause onwards is cut, so
+// "Sabat is the cheapest at R4,650 — that's R550 less…" keeps "Sabat is the cheapest at R4,650."
+function stripLines(text, isBad, onRemove) {
   return text.split('\n').map(line => {
-    if (!SAVINGS_RE.test(line)) return line;
-    console.warn('[PriceGuard] Removed savings amount', JSON.stringify({
-      from: from ? '****' + String(from).slice(-4) : '', line,
-    }));
-    // 💡 comparison tips are optional and italic-wrapped — drop the whole tip rather than leave half
+    if (!isBad(line)) return line;
+    onRemove(line);
     if (/^\s*💡/.test(line)) return null;
-    // Drop only the offending clause, so "Sabat is the cheapest at R4,650 — that's R550 less…"
-    // keeps "Sabat is the cheapest at R4,650."
     const kept = line.split(/(?<=[.!?])\s+/).map(sentence => {
-      if (!SAVINGS_RE.test(sentence)) return sentence;
+      if (!isBad(sentence)) return sentence;
       const clauses = sentence.split(/\s+—\s+|;\s+|,\s+/);
       const good = [];
-      for (const c of clauses) { if (SAVINGS_RE.test(c)) break; good.push(c); }
+      for (const c of clauses) { if (isBad(c)) break; good.push(c); }
       if (!good.length) return '';
       return good.join(', ').replace(/[\s,]+$/, '').replace(/([^.!?])$/, '$1.');
     }).filter(Boolean).join(' ').trim();
@@ -100,9 +99,43 @@ function stripSavings(from, text) {
   }).filter(l => l !== null).join('\n');
 }
 
+function stripSavings(from, text) {
+  return stripLines(text, l => SAVINGS_RE.test(l), line =>
+    console.warn('[PriceGuard] Removed savings amount', JSON.stringify({ from: mask(from), line })));
+}
+
+// Ah / CCA figures: "70Ah", "70 amp hours", "760 CCA", "CCA of 760"
+const SPEC_RE = /\b(\d{2,4}(?:\.\d)?)\s?(?:ah|a\/h|amp[\s-]?hours?)\b|\b(\d{3,4})\s?cca\b|\bcca\s?(?:of\s|:\s?)?(\d{3,4})\b/gi;
+
+function catalogueSpecs(skus) {
+  const specs = new Set();
+  for (const sku of skus) {
+    for (const b of getPricesForSKU(sku)) {
+      for (const v of [b.ahrating, b.ccasae, b.ccaen]) {
+        const n = Math.round(parseFloat(v));
+        if (!isNaN(n)) specs.add(n);
+      }
+    }
+  }
+  return specs;
+}
+
+// The catalogue may not carry Ah/CCA for a battery — never let the bot make them up
+function stripUnverifiedSpecs(from, text, skus) {
+  if (!skus.size) return text; // not talking about a specific battery
+  const allowed = catalogueSpecs(skus);
+  const isBad = s => [...s.matchAll(SPEC_RE)].some(m => !allowed.has(Math.round(parseFloat(m[1] || m[2] || m[3]))));
+  return stripLines(text, isBad, line =>
+    console.warn('[PriceGuard] Removed unverified spec', JSON.stringify({ from: mask(from), line, skus: [...skus] })));
+}
+
 function guardPrices(from, text) {
   if (!text) return text;
   text = stripSavings(from, text);
+  {
+    const skus = skusIn(text);
+    text = stripUnverifiedSpecs(from, text, skus.size ? skus : rememberedSkus(from));
+  }
 
   const messageSkus = skusIn(text);
   const fallbackSkus = messageSkus.size ? messageSkus : rememberedSkus(from);

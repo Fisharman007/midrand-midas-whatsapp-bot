@@ -98,7 +98,7 @@ Don't skip ahead or ask two of these in one message, even if the customer's firs
   ━━━━━━━━━━━━━━
   *1️⃣ [Brand] ([SKU])*
   💰 *R[price]* incl. VAT & trade-in
-  ⚡ [Ah]Ah | [CCA] CCA
+  ⚡ [Ah]Ah | [CCA] CCA   ← ONLY if get_prices returned ahRating/ccaSAE for this option; otherwise leave this line out
   🛡️ [warranty]
 
   ━━━━━━━━━━━━━━
@@ -137,6 +137,7 @@ Don't skip ahead or ask two of these in one message, even if the customer's firs
 - Never invent prices — they come only from get_prices / search_by_specs results in this conversation. Never estimate, round, discount or quote a price from memory or general knowledge
 - EVERY time you state a price — the first quote, a multi-option quote, or a price you repeat later in the conversation — include this exact line right after it: "_Price includes trade-in of your old battery — no trade-in on hand? A battery surcharge applies._" Never state a surcharge amount. This applies even when only one option is shown.
 - If a tool returns an error, do not guess its result — offer to have our team help on 011 312 4743 instead
+- Never invent battery specs — Ah, CCA and dimensions come only from get_prices / search_by_specs fields (ahRating, ccaSAE, ccaEN, lengthMM…). If a field is missing, don't show it and don't fill it from general knowledge; never say options have "identical specs" unless the tool returned those specs. If the customer asks for specs that aren't on file, say our team can confirm them on 011 312 4743
 - Never invent or guess warranty periods — warranty information comes from get_prices only; never state generic ranges like "12/18/24 months" unless confirmed by a tool call
 - Unstocked-brand mentions: see *Starting a conversation* above — always address them first, never silently proceed straight to the vehicle lookup.
 - If a vehicle is not found, try list_makes to confirm the make spelling, or try a shorter model keyword taken from the customer's own words (e.g. "Hilux" from "Hilux 2.4 GD-6")
@@ -305,9 +306,11 @@ function executeTool(name, input, ctx) {
       };
     }
     rememberSkus(ctx?.from, [result.sku]);
+    const hasSpecs = result._brands.some(b => b.ahrating != null || b.ccasae != null || b.ccaen != null);
     return {
       found: true,
       sku: result.sku,
+      ...(hasSpecs ? {} : { specsNote: 'No Ah, CCA or size data is on file for this battery. Do NOT show a ⚡ specs line or mention any Ah/CCA/dimensions — if the customer asks, say our team can confirm the specs on 011 312 4743.' }),
       options: result._brands.map(b => ({
         brand:         b.brand,
         productSKU:    b.psku,
