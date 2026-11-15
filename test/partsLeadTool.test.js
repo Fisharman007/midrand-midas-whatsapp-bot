@@ -37,3 +37,9 @@ test('submit_parts_lead ignores a phone number or name smuggled into the tool in
   assert.match(lead, /\*\*\*\*0087/);
   assert.doesNotMatch(lead, /Mallory|9999/);
 });
+
+test('no log line for a parts lead carries the customer name or delivery address', () => {
+  const { lines } = captureLogs(() => executeTool('submit_parts_lead', input, ctx));
+  assert.ok(lines.length > 0);
+  for (const l of lines) assert.doesNotMatch(l, /12 Main Rd|Sam/, l);
+});

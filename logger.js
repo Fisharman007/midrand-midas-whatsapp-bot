@@ -66,7 +66,9 @@ function logLead({ from, profileName, type, request }) {
   leadBuffer.push(entry);
   if (leadBuffer.length > MAX_LOG_ENTRIES) leadBuffer.shift();
 
-  console.log('[LEAD]', JSON.stringify({ ...entry, from: maskPhone(from) }));
+  // Logs get only who (masked) and what kind — name and request (may hold a delivery address) stay in
+  // the leads sheet and /admin/leads, which are access-controlled.
+  console.log('[LEAD]', JSON.stringify({ ts: entry.ts, from: maskPhone(from), type: entry.type }));
 
   // Best-effort durable copy — a Google Sheet survives server restarts/redeploys,
   // unlike leadBuffer above. Fire-and-forget: never let a Sheets hiccup slow down
