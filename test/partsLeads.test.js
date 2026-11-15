@@ -55,4 +55,5 @@ test('recordUnsavedLead logs only the masked number', () => {
   assert.match(lines[0], /\[LEAD-UNSAVED\] parts/);
   assert.match(lines[0], /\*\*\*\*0087/);
   assert.doesNotMatch(lines[0], /27631890087/);
+  assert.doesNotMatch(lines[0], /12 Main Rd|Sam/, 'address and name stay out of the logs');
 });

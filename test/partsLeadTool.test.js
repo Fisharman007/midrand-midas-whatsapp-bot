@@ -26,6 +26,7 @@ test('submit_parts_lead answers straight away and logs a masked parts lead', () 
   assert.match(lead, /\*\*\*\*0087/);
   assert.match(lead, /Brake pads/);
   assert.doesNotMatch(lead, /27631890087/);
+  assert.doesNotMatch(lead, /12 Main Rd|Sam/, 'address and name stay out of the logs');
 });
 
 test('submit_parts_lead ignores a phone number or name smuggled into the tool input', () => {
@@ -34,6 +35,5 @@ test('submit_parts_lead ignores a phone number or name smuggled into the tool in
   const lead = lines.find(l => l.startsWith('[LEAD] parts'));
   assert.ok(lead);
   assert.match(lead, /\*\*\*\*0087/);
-  assert.match(lead, /"customerName":"Sam"/);
   assert.doesNotMatch(lead, /Mallory|9999/);
 });

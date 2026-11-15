@@ -52,8 +52,13 @@ async function saveWithRetry(lead, { save = l => savePartsLead(l), delays = RETR
 
 // Every save attempt failed. The lead is already on the staff Google Sheet, so only log it (masked).
 function recordUnsavedLead(lead, err) {
-  const masked = { ...lead, phone: '****' + String(lead.phone).slice(-4) };
-  console.error('[LEAD-UNSAVED] parts — not on the dashboard, but it is on the leads sheet:', err.message, JSON.stringify(masked));
+  console.error('[LEAD-UNSAVED] parts — not on the dashboard, but it is on the leads sheet:', err.message, JSON.stringify(forLogs(lead)));
+}
+
+// What a parts lead may show in the logs: masked number, no name or delivery address
+// (the staff sheet and the dashboard hold the full lead).
+function forLogs(lead) {
+  return { phone: '****' + String(lead.phone).slice(-4), vehicle: lead.vehicle, parts: lead.parts, fulfilment: lead.fulfilment };
 }
 
 function createMemoryStore() {
@@ -112,4 +117,4 @@ function defaultStore() {
   return store;
 }
 
-module.exports = { buildPartsLead, savePartsLead, saveWithRetry, recordUnsavedLead, createMemoryStore, createPgStore };
+module.exports = { buildPartsLead, forLogs, savePartsLead, saveWithRetry, recordUnsavedLead, createMemoryStore, createPgStore };

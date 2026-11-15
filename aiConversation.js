@@ -4,7 +4,7 @@ const { searchKnowledge } = require('./knowledge');
 const { logTurn, logLead } = require('./logger');
 const { rememberSkus } = require('./priceGuard');
 const { buildBatteryLead, saveWithRetry, recordUnsavedLead, rememberQuote, quotedOptionsText, wasQuoted } = require('./batteryLeads');
-const { buildPartsLead, saveWithRetry: savePartsWithRetry, recordUnsavedLead: recordUnsavedPartsLead } = require('./partsLeads');
+const { buildPartsLead, saveWithRetry: savePartsWithRetry, recordUnsavedLead: recordUnsavedPartsLead, forLogs: partsLeadForLogs } = require('./partsLeads');
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
@@ -387,7 +387,7 @@ function executeTool(name, input, ctx) {
       fulfilment, deliveryAddress, vehicle, parts,
       from: ctx.from, customerName: ctx.profileName,
     });
-    console.log('[LEAD] parts', JSON.stringify({ ...lead, phone: '****' + lead.phone.slice(-4) }));
+    console.log('[LEAD] parts', JSON.stringify(partsLeadForLogs(lead)));
     savePartsWithRetry(lead)
       .then(r => console.log('[PartsLead] Saved', r.leadId))
       .catch(err => recordUnsavedPartsLead(lead, err));
