@@ -4,6 +4,7 @@ const { searchKnowledge } = require('./knowledge');
 const { logTurn, logLead } = require('./logger');
 const { rememberSkus } = require('./priceGuard');
 const { buildBatteryLead, saveWithRetry, recordUnsavedLead, rememberQuote, quotedOptionsText, wasQuoted } = require('./batteryLeads');
+const { buildPartsLead, saveWithRetry: savePartsWithRetry, recordUnsavedLead: recordUnsavedPartsLead } = require('./partsLeads');
 
 const MODEL = process.env.ANTHROPIC_MODEL || 'claude-haiku-4-5-20251001';
 const MAX_TOOL_ROUNDS = 8;
@@ -380,6 +381,16 @@ function executeTool(name, input, ctx) {
         : 'Collect in-store at Midrand Midas',
     ].join('\n');
     logLead({ from: ctx.from, profileName: ctx.profileName, type: 'parts', request });
+    // Also saved to the parts leads dashboard database, in the background — the customer's reply
+    // never waits on it. Name and phone come from the webhook, never from the AI's input.
+    const lead = buildPartsLead({
+      fulfilment, deliveryAddress, vehicle, parts,
+      from: ctx.from, customerName: ctx.profileName,
+    });
+    console.log('[LEAD] parts', JSON.stringify({ ...lead, phone: '****' + lead.phone.slice(-4) }));
+    savePartsWithRetry(lead)
+      .then(r => console.log('[PartsLead] Saved', r.leadId))
+      .catch(err => recordUnsavedPartsLead(lead, err));
     return { success: true };
   }
 
